@@ -16,9 +16,13 @@ distilled version for working on the code.
 | Rules engine | Whether a signal fires | Plain JS, `decideAtBar_()` in `Strategy.js` |
 | Analyst / agent | Nothing. Describes, investigates, grades | Claude via the API |
 
+| AI gate (shadow) | Nothing. Records what it *would* have done | Claude via `AiGate.js` |
+
 The model never generates, approves or vetoes a signal. Its job is to write a
 **falsifiable** note (setup, invalidation, what to watch) and later grade that note
 against what happened. Keep it that way: an LLM deciding trades can't be backtested.
+The AI gate (§13) is the one place a model gives a trade opinion, and it is shadow-only
+for exactly this reason.
 
 ## 2. Strategy (v1, long-only Donchian breakout)
 
@@ -187,3 +191,39 @@ EMA seed = SMA; state machine never double-enters; live monitor signals == backt
 signals; ledger reconciles with equity; no hidden leverage; filters-off parity; lab
 verdict paths; every panel endpoint rejects a wrong key; no Date objects in panel payloads.
 The harness is not in the repo yet — adding it as `tests/` would be a good first task.
+
+## 13. AI gate (`AiGate.js`) — shadow only
+
+Source idea: a rules strategy with one "thinking if" — enter only when the rules fire AND a
+fast model answers `{"action":"buy","conviction":≥X,"risk_flag":<Y}`; stops and exits stay
+with the rules; a high risk score may argue for an early exit. "Rules manage the money, the
+AI handles the reflexes."
+
+What is built: on every rule entry bar and every bar while LONG, `runMonitor` asks Claude
+(`CONFIG.GATE.model`, effort `low`, structured output with a JSON schema) for those three
+fields, and logs them to the **Gate** sheet with what the gate *would* do:
+
+```
+FLAT + rule entry  -> ALLOW_ENTRY if action=buy, conviction >= 1.0, risk_flag < 0.5, else BLOCK_ENTRY
+LONG, no signal    -> EXIT_EARLY  if action=sell and risk_flag >= 0.7, else STAY
+```
+
+When the trade closes, its real R is written to every Gate row of that trade (`FinalR`).
+`showGateReport()` compares avg R of would-allow vs would-block entries, and R at the
+first early-exit flag vs the rule exit. It refuses a verdict below 20 closed trades.
+
+Why shadow, not live:
+- **No honest backtest.** The model has seen BTC's history, so replaying past bars through
+  it leaks the future. Forward logging is the only clean evidence. The snapshot carries no
+  dates, but the price level alone can identify the period.
+- **One strategy, Pine parity.** A live veto would make live differ from `decideAtBar_`, the
+  backtest, the lab and the Pine script, and TradingView would flag every vetoed entry.
+- Turning it into a real vote would be a new decision for the owner, with the §1 rule
+  rewritten deliberately — not a config flip. `mode` only takes `'shadow'` or `'off'`.
+
+Safety properties (verified with mocks): the gate never writes `BOT_STATE` or the paper
+account; any API error or refusal becomes a `NO_VERDICT` row and the monitor carries on;
+bar-by-bar monitor output with the gate on equals the output with it off (same signals,
+state and paper account). Refusal fallback (`fallbacks: "default"`) is enabled.
+
+Cost: one call per entry plus one per 4h bar in a trade — a few calls a day at most.

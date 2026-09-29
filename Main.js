@@ -74,6 +74,10 @@ function runMonitor() {
     if (state.position === 'LONG') state.barsInTrade++;
 
     const sig = decideAtBar_(candles, series, i, state);
+    const before = {                     // position BEFORE this bar's signal, for the AI gate
+      position: state.position, entryPrice: state.entryPrice, stop: state.stop,
+      barsInTrade: state.barsInTrade, entryTime: state.entryTime
+    };
 
     if (sig) {
       // 1. Commit the decision FIRST. If anything below crashes, the next
@@ -88,18 +92,24 @@ function runMonitor() {
       recordCrosscheck_('APPS_SCRIPT', sig.type, sig.barTime, sig.price, '');
       paperOnSignal_(sig);
 
-      // 3. Slow step last: the agent investigates and writes its note
-      //    (falls back to the one-shot analyst by itself if it errors).
+      // 3. Slow steps last. The AI gate is shadow-only: it logs a verdict and
+      //    changes nothing above. Then the agent writes its note (falls back
+      //    to the one-shot analyst by itself if it errors).
+      let gateLine = '';
+      if (sig.type === 'ENTRY_LONG') gateLine = gateOnBar_(candles, series, i, before, sig, sig.barTime);
+      else gateCloseTrade_(before.entryTime, sig.rMultiple);
+
       const ctx = marketContext_(candles, series, i);
       const note = sig.type === 'ENTRY_LONG'
         ? agentPreTradeNote_(sig, ctx)
         : { setup: sig.reason, invalidation: '', watch: '', confidence: 'n/a' };
 
       appendSignal_(sig, note);
-      sendAlert_(formatAlert_(sig, note, ctx));
+      sendAlert_(formatAlert_(sig, note, ctx) + gateLine);
     } else {
       state.lastBarProcessed = last.t;
       setState_(state);
+      if (state.position === 'LONG') gateOnBar_(candles, series, i, before, null, before.entryTime);
     }
 
     paperSnapshot_(last.t, last.c);
@@ -232,6 +242,7 @@ function onOpen() {
       .addItem('Grade pending signals', 'runGrader')
       .addItem('Ask the agent', 'askAgentPrompt')
       .addItem('Show paper account', 'showPaperAccount')
+      .addItem('AI gate report (shadow)', 'showGateReport')
       .addItem('Show dashboard URL', 'showDashboardUrl'))
     .addSubMenu(ui.createMenu('TradingView')
       .addItem('Send a test webhook', 'testTradingViewWebhook'))
@@ -352,6 +363,10 @@ function installChecks_(skipApi) {
   check('Lab.gs', () => need(typeof runLab === 'function' && typeof entryBlockedBy_ === 'function' &&
                              CONFIG.LAB !== undefined, 'Lab.gs (and Strategy.gs, Config.gs)'));
   check('AutoBacktest.gs', () => need(typeof runAutoBacktest === 'function', 'AutoBacktest.gs'));
+  check('AiGate.gs', () => {
+    need(typeof gateOnBar_ === 'function' && CONFIG.GATE !== undefined, 'AiGate.gs (and Config.gs)');
+    return 'mode ' + CONFIG.GATE.mode + ', model ' + CONFIG.GATE.model;
+  });
   check('History.gs is current', () => need(typeof updateHistory === 'function', 'History.gs'));
   check('Config.gs is current', () => need(CONFIG.BACKTEST.minTrades !== undefined && CONFIG.LAB !== undefined, 'Config.gs'));
   check('DashboardPage.html', () => { HtmlService.createTemplateFromFile('DashboardPage'); });

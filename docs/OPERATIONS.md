@@ -7,7 +7,7 @@ column, property or trigger — other code (and the web panel) reads them by nam
 
 | Handler | When | Does |
 |---|---|---|
-| `runMonitor` | every 15 min | new closed 4h candle → signal → paper fill, agent note, alert; equity snapshot |
+| `runMonitor` | every 15 min | new closed 4h candle → signal → paper fill, AI gate verdict (shadow), agent note, alert; equity snapshot |
 | `runDailyBrief` | 08:00 | regime brief (Regime sheet + alert) |
 | `runGrader` | 11:00 | grades notes ≥12 bars old; reconciles Crosscheck |
 | `runAutoBacktest` | Sunday 09:00 | all backtest stages → BT_Log row + alert; then Claude lab proposals |
@@ -29,6 +29,7 @@ Sheets marked *overwritten* are replaced on every run; everything else is append
 | Journal | agent Q&A, lab promote/revert | |
 | Log | `logLine_` | levels INFO / WARN / ERROR / SIGNAL; trimmed to 2,000 rows |
 | Trace | agent loop | every tool call |
+| Gate | monitor (AI gate, shadow) | one row per verdict; `FinalR` filled when the trade closes (`GATE_HEADERS`) |
 | Crosscheck | webhook + monitor | status PENDING / MATCH / TV_ONLY / APPS_SCRIPT_ONLY |
 | History | `buildHistory`, `updateHistory`, `importTradingViewCsv` | `t_ms, time_utc, open, high, low, close, volume` |
 | BT_Summary, BT_Trades, BT_Equity, BT_Sweep, BT_WalkForward, BT_MonteCarlo, BT_Compare, BT_LiveVsBacktest | backtest stages | *overwritten* each run |
@@ -65,7 +66,7 @@ Check installation · Test data feed · Test live price · Dump indicators ·
 **Backtesting**: build/import/update history, quick, detailed, sweep, walk-forward, Monte
 Carlo, TV compare, live decay, full automatic run ·
 **Lab**: add starters, run now, ask Claude, promote (holdout), show live, revert ·
-**Live**: check now, daily brief, grade, ask the agent, paper account, dashboard URL ·
+**Live**: check now, daily brief, grade, ask the agent, paper account, AI gate report, dashboard URL ·
 **TradingView**: test webhook · Show scorecard · **Reset**: position state, paper account.
 
 `checkInstall()` / `installChecks_(skipApi)` detect stale files by looking for a function

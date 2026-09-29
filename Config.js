@@ -74,6 +74,22 @@ const CONFIG = {
     gradeAfterBars: 12          // grade a signal this many bars later
   },
 
+  // AI gate (AiGate.gs): a fast buy/sell/hold + conviction + risk verdict on each
+  // rule entry and each in-trade bar. SHADOW ONLY — logged to the Gate sheet and
+  // graded against real trade results, never changes a trade. 'off' stops the calls.
+  // Costs roughly one API call per 4h bar while in a trade, plus one per entry.
+  GATE: {
+    mode: 'shadow',             // 'shadow' | 'off'
+    model: 'claude-opus-5-5',
+    effort: 'low',              // short classification: low effort keeps it fast and cheap
+    maxTokens: 4000,
+    barsInPrompt: 30,           // recent candles sent with each question
+    minConviction: 1.0,         // would allow an entry only if action=buy and conviction >= this (0-2)
+    maxRisk: 0.5,               // ...and risk_flag < this (0-1)
+    exitRisk: 0.7,              // in a trade: would exit early if action=sell and risk_flag >= this
+    minTradesToJudge: 20        // the report refuses to call a winner before this many closed trades
+  },
+
   AGENT: {
     enabled: true,        // false = fall back to the one-shot analyst
     maxTurns: 6,          // hard cap on tool-loop iterations

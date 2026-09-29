@@ -49,6 +49,47 @@ function buildHistory() {
 }
 
 /**
+ * Append only the bars closed since the last stored one. Run weekly by
+ * runAutoBacktest(), or from the menu. Builds the full history if the sheet
+ * is empty. Returns { added, lastUtc }.
+ */
+function updateHistory() {
+  const s = ss_().getSheetByName(CONFIG.BACKTEST.historySheet);
+  if (!s || s.getLastRow() < 3) {
+    buildHistory();
+    const all = loadHistory_();
+    return { added: all.length, lastUtc: utc_(all[all.length - 1].t) };
+  }
+
+  const iv = CONFIG.MARKET.intervalMinutes;
+  const ivMs = iv * 60 * 1000;
+  const lastT = Number(s.getRange(s.getLastRow(), 1).getValue());
+
+  let fresh;
+  if (CONFIG.MARKET.provider === 'coinbase') {
+    const gran = coinbaseBaseGran_(iv);
+    const raw = fetchCoinbaseRange_(CONFIG.MARKET.symbol, gran, lastT + ivMs, Date.now());
+    fresh = (gran === iv * 60) ? raw : aggregateCandles_(raw, iv);
+  } else {
+    fresh = fetchCandles_();   // other providers: the live feed's recent bars
+  }
+  fresh = fresh.filter(k => k.t > lastT && k.t + ivMs <= Date.now());
+
+  if (fresh.length) {
+    const rows = fresh.map(k => [
+      k.t, new Date(k.t).toISOString().slice(0, 16).replace('T', ' '), k.o, k.h, k.l, k.c, k.v
+    ]);
+    s.getRange(s.getLastRow() + 1, 1, rows.length, HISTORY_HEADERS.length).setValues(rows);
+    // Check the seam between the old last bar and the new ones.
+    checkHistoryGaps_([{ t: lastT }].concat(fresh));
+  }
+
+  const endT = fresh.length ? fresh[fresh.length - 1].t : lastT;
+  Logger.log('History: added %s new bar(s), last bar now %s UTC.', fresh.length, utc_(endT));
+  return { added: fresh.length, lastUtc: utc_(endT) };
+}
+
+/**
  * Import a TradingView chart export.
  *
  * 1. On TradingView, set the chart timezone to UTC (bottom-right clock).

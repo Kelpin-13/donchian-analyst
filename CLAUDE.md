@@ -37,6 +37,7 @@ There are no exchange keys and no order endpoints, and that must stay true.
 | `AutoBacktest.js` | Weekly run of every stage, verdict rules, one permanent row per run in BT_Log |
 | `Lab.js` | Research lab: queued experiments, locked holdout year, promote/revert with human approval |
 | `PaperBroker.js` | Paper account: fills at the live price with fees and slippage |
+| `AiGate.js` | Shadow-only three-field verdict (action, conviction, risk_flag) logged to the Gate sheet and graded against real trades. Never changes a trade |
 | `Analyst.js` / `Agent.js` | One-shot Claude calls / tool-calling agent loop with READ-ONLY tools |
 | `Journal.js` | Signals sheet and the self-grading loop |
 | `Webhook.js` | `doPost` router (TradingView cross-check, Telegram) |
