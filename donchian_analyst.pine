@@ -1,0 +1,101 @@
+//@version=6
+// ============================================================================
+// Donchian Analyst — TradingView twin of the Apps Script rules engine.
+//
+// This is the SAME strategy as Strategy.gs, written a second time in a
+// different language, running on a different server. Two uses:
+//
+//   1. BACKTEST CROSS-CHECK — add it to a chart, open the Strategy Tester,
+//      and compare its trades with runDetailedBacktest() / compareTvTrades().
+//      If two independent implementations agree, both are probably right.
+//
+//   2. LIVE WITNESS — create an alert on it. Every signal POSTs JSON to your
+//      Apps Script web app, which checks that its own engine fired on the
+//      same bar (Crosscheck sheet). TradingView never places orders here.
+//
+// Parity rules this script follows on purpose:
+//   - Channels EXCLUDE the current bar:  ta.highest(high, n)[1]
+//   - Decisions happen on bar CLOSE; orders fill at the NEXT bar's open.
+//   - Position state flips on the SIGNAL bar (like Apps Script), not the fill bar.
+//   - Stop is checked against the CLOSE, not intrabar lows.
+//   - Exit priority: stop, then channel, then time.
+//
+// For an exact trade-by-trade comparison, set slippage to 0 here AND
+// BACKTEST.slippagePct = 0 in Config.gs, and use the same commission on both.
+// ============================================================================
+strategy("Donchian Analyst", shorttitle = "DA", overlay = true,
+     initial_capital = 1000, currency = currency.USD,
+     commission_type = strategy.commission.percent, commission_value = 0.1,
+     slippage = 0, pyramiding = 0,
+     process_orders_on_close = false, calc_on_every_tick = false,
+     margin_long = 100)
+
+// ---- Inputs: keep these identical to CONFIG.STRATEGY in Config.gs ----------
+grpS = "Strategy (must match Config.gs)"
+breakLen = input.int(20, "Breakout lookback", minval = 2, group = grpS)
+exitLen  = input.int(10, "Exit lookback", minval = 2, group = grpS)
+atrLen   = input.int(14, "ATR period", minval = 1, group = grpS)
+stopMult = input.float(2.0, "Stop, ATR multiple", minval = 0.1, step = 0.1, group = grpS)
+emaLen   = input.int(100, "Trend EMA period", minval = 2, group = grpS)
+maxBars  = input.int(60, "Max bars in trade", minval = 1, group = grpS)
+riskPct  = input.float(1.0, "Risk % of equity per trade", minval = 0.1, step = 0.1, group = grpS)
+maxExp   = input.float(100, "Max exposure % of equity", minval = 1, maxval = 100, group = grpS)
+
+grpW = "Webhook"
+secret = input.string("", "Webhook secret (letters and digits only)", group = grpW,
+     tooltip = "Same value as TV_WEBHOOK_SECRET in Apps Script Script Properties. Stored in your chart settings, not in this source code.")
+
+// ---- Indicators ------------------------------------------------------------
+upper = ta.highest(high, breakLen)[1]   // prior N bars only
+lower = ta.lowest(low, exitLen)[1]
+ema   = ta.ema(close, emaLen)
+atr   = ta.atr(atrLen)                  // Wilder smoothing, same as Indicators.gs
+
+// ---- State, mirroring getState_() ------------------------------------------
+var bool  inTrade  = false
+var float stopLvl  = na
+var int   entryBar = na
+
+// JSON body for the webhook. TradingView only sends Content-Type
+// application/json when this parses as valid JSON — keep the secret simple.
+msg(string typ, float px) =>
+    '{"secret":"' + secret + '","source":"tradingview","symbol":"' + syminfo.tickerid +
+     '","interval":"' + timeframe.period + '","type":"' + typ +
+     '","bar_time":' + str.tostring(time) + ',"price":' + str.tostring(px) + '}'
+
+ready = not na(upper) and not na(lower) and not na(ema) and not na(atr)
+
+if barstate.isconfirmed and ready
+    if not inTrade
+        if close > upper and close > ema
+            stopLvl := close - stopMult * atr
+            perUnit = close - stopLvl
+            qtyRisk = perUnit > 0 ? strategy.equity * riskPct / 100 / perUnit : 0.0
+            qtyCap  = strategy.equity * maxExp / 100 / close
+            qty     = math.min(qtyRisk, qtyCap)
+            if qty > 0
+                strategy.entry("L", strategy.long, qty = qty, comment = "ENTRY_LONG")
+            inTrade  := true
+            entryBar := bar_index
+            alert(msg("ENTRY_LONG", close), alert.freq_once_per_bar_close)
+    else
+        barsIn = bar_index - entryBar
+        string ex = ""
+        if close <= stopLvl
+            ex := "EXIT_STOP"
+        else if close < lower
+            ex := "EXIT_CHANNEL"
+        else if barsIn >= maxBars
+            ex := "EXIT_TIME"
+        if ex != ""
+            strategy.close("L", comment = ex)
+            inTrade := false
+            stopLvl := na
+            alert(msg(ex, close), alert.freq_once_per_bar_close)
+
+// ---- Visuals ---------------------------------------------------------------
+plot(upper, "Breakout line", color = #17202E, style = plot.style_stepline)
+plot(lower, "Exit line", color = #5B6675, style = plot.style_stepline)
+plot(ema, "Trend EMA", color = #B07F1F, linewidth = 2)
+plot(inTrade ? stopLvl : na, "Stop", color = #A4243B, style = plot.style_linebr, linewidth = 2)
+bgcolor(inTrade ? color.new(#1C6E8C, 92) : na, title = "In trade")
