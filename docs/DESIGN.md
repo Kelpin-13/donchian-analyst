@@ -227,3 +227,24 @@ bar-by-bar monitor output with the gate on equals the output with it off (same s
 state and paper account). Refusal fallback (`fallbacks: "default"`) is enabled.
 
 Cost: one call per entry plus one per 4h bar in a trade — a few calls a day at most.
+
+## 14. Challenger (`Challenger.js`)
+
+A second paper account that runs the same `decideAtBar_()` with
+`CONFIG.STRATEGY + CHALLENGER.overrides` on `CHALLENGER.intervalMinutes` candles (first
+challenger: 1h candles, 20/10). It exists because one month of live results says little;
+two settings over the *same* month at least face the same market.
+
+- Isolation: own state (`CH_STATE`), own paper book (`CH_PAPER_STATE`, Ch_Trades, Ch_Equity),
+  own trigger. `PaperBroker.js` takes an optional book; the live account is the default
+  (`LIVE_BOOK`), so live calls are unchanged.
+- No agent note, AI gate, alert or cross-check — paper and log only.
+- Fair start: `CH_START` records BTC and the live paper equity at the challenger's first bar;
+  both accounts and buy & hold are reported from that moment.
+- Verified: replaying 129 days of real Coinbase data in 15-minute steps, the live strategy's
+  signals, fills and equity snapshots were identical to the pre-challenger code, with the
+  challenger on or off. Challenger fills alternate, trades reconcile with its book.
+- Coinbase only (it pages the public candles API at any interval).
+
+Switching live to the challenger is the owner's call and changes the candle interval, the
+backtest history and the Pine chart timeframe — backtest it on full history first.

@@ -36,6 +36,7 @@ There are no exchange keys and no order endpoints, and that must stay true.
 | `Backtest.js` | `simulate_()` engine (next-open fills, fees, slippage, risk sizing), metrics, sweep, walk-forward, Monte Carlo |
 | `AutoBacktest.js` | Weekly run of every stage, verdict rules, one permanent row per run in BT_Log |
 | `Lab.js` | Research lab: queued experiments, locked holdout year, promote/revert with human approval |
+| `Challenger.js` | Second paper account: same `decideAtBar_()` on other candles/settings (`CONFIG.CHALLENGER`), side by side with live. Never touches the live position |
 | `PaperBroker.js` | Paper account: fills at the live price with fees and slippage |
 | `AiGate.js` | Shadow-only three-field verdict (action, conviction, risk_flag) logged to the Gate sheet and graded against real trades. Never changes a trade |
 | `Analyst.js` / `Agent.js` | One-shot Claude calls / tool-calling agent loop with READ-ONLY tools |

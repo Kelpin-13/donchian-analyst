@@ -133,13 +133,33 @@ function getDashboardData(k) {
 
 /** Show the full dashboard URL so you don't have to assemble it by hand. */
 function showDashboardUrl() {
-  const url = ScriptApp.getService().getUrl();
-  const msg = !url
-    ? 'Not deployed yet. In the Apps Script editor: Deploy → New deployment → Web app.'
-    : 'Dashboard (keep this private):\n' + url + '?k=' + secret_('DASHBOARD_KEY', true) +
-      '\n\nWebhook URL for TradingView and Telegram:\n' + url;
+  const panel = webAppUrl_('DASHBOARD_URL');
+  const hook = webAppUrl_('WEBHOOK_URL');
+  const msg = panel.error
+    ? panel.error
+    : 'Dashboard (keep this private):\n' + panel.url + '?k=' + secret_('DASHBOARD_KEY', true) +
+      '\n\nWebhook URL for TradingView and Telegram:\n' +
+      (hook.url || 'not set. Only needed for webhooks: add WEBHOOK_URL (the /exec link) to Script Properties.');
   Logger.log(msg);
   try { SpreadsheetApp.getUi().alert('Web app links', msg, SpreadsheetApp.getUi().ButtonSet.OK); } catch (e) {}
+}
+
+/**
+ * Web app links come from Script Properties, not ScriptApp.getService().getUrl(),
+ * which can return a deployment ID that no longer exists ("unable to open the file").
+ * Copy the link from Deploy → Manage deployments (/exec) or Test deployments (/dev).
+ * Returns { url } or { error }.
+ */
+function webAppUrl_(prop) {
+  const raw = secret_(prop, false).trim().split('?')[0].replace(/\/+$/, '');
+  if (!raw) {
+    return { error: prop + ' is not set. In the Apps Script editor: Deploy → Test deployments → copy the Web app URL ' +
+      '(ends in /dev), then Project Settings → Script Properties → add ' + prop + ' with that link.' };
+  }
+  if (!/^https:\/\/script\.google\.com\/(a\/macros\/[^/]+|macros)\/s\/[\w-]+\/(dev|exec)$/.test(raw)) {
+    return { error: prop + ' doesn\'t look like a web app link (it should end in /dev or /exec): ' + raw };
+  }
+  return { url: raw };
 }
 
 /* =====================================================================
@@ -201,7 +221,8 @@ function getPaperData(k) {
     startedAt: a.startedAt ? Utilities.formatDate(new Date(a.startedAt), CONFIG.TZ, 'dd MMM yyyy') : '',
     feePct: CONFIG.PAPER.feePct, slippagePct: CONFIG.PAPER.slippagePct,
     curve: lastRows_('Equity', 400).map(r => ({ t: shortDate_(r[1]), v: Number(r[5]) })),
-    fills: readTable_('PaperTrades', 40)
+    fills: readTable_('PaperTrades', 40),
+    challenger: challengerCompare_(price)
   };
 }
 
@@ -246,7 +267,7 @@ function getSystemData(k) {
   return {
     provider: CONFIG.MARKET.provider, symbol: CONFIG.MARKET.symbol, interval: CONFIG.MARKET.intervalMinutes,
     model: CONFIG.ANALYST.model, agent: !!(CONFIG.AGENT && CONFIG.AGENT.enabled),
-    tvEnabled: CONFIG.TRADINGVIEW.enabled, emailOn: !!CONFIG.ALERTS.email, telegramOn: !!CONFIG.ALERTS.telegramChatId,
+    tvEnabled: CONFIG.TRADINGVIEW.enabled, challengerOn: !!(CONFIG.CHALLENGER && CONFIG.CHALLENGER.enabled), emailOn: !!CONFIG.ALERTS.email, telegramOn: !!CONFIG.ALERTS.telegramChatId,
     triggers: triggers,
     lastRun: Number(PropertiesService.getScriptProperties().getProperty('LAST_MONITOR_RUN') || 0),
     serverNow: Date.now(),

@@ -12,6 +12,7 @@ column, property or trigger — other code (and the web panel) reads them by nam
 | `runGrader` | 11:00 | grades notes ≥12 bars old; reconciles Crosscheck |
 | `runAutoBacktest` | Sunday 09:00 | all backtest stages → BT_Log row + alert; then Claude lab proposals |
 | `runLab` | 02:00 | runs QUEUED experiments within a 4.5-min budget |
+| `runChallenger` | every 15 min | challenger paper account: acts once per closed `CHALLENGER.intervalMinutes` candle (skips without fetching otherwise) |
 | `processTelegramQueue` | one-off, ~1s after a Telegram message | answers queued questions |
 
 `setup()` deletes **all** triggers first, then installs these. Re-run it after adding a job.
@@ -30,6 +31,7 @@ Sheets marked *overwritten* are replaced on every run; everything else is append
 | Log | `logLine_` | levels INFO / WARN / ERROR / SIGNAL; trimmed to 2,000 rows |
 | Trace | agent loop | every tool call |
 | Gate | monitor (AI gate, shadow) | one row per verdict; `FinalR` filled when the trade closes (`GATE_HEADERS`) |
+| Ch_Trades, Ch_Equity | `runChallenger` | challenger's fills and per-bar equity; same columns as PaperTrades / Equity |
 | Crosscheck | webhook + monitor | status PENDING / MATCH / TV_ONLY / APPS_SCRIPT_ONLY |
 | History | `buildHistory`, `updateHistory`, `importTradingViewCsv` | `t_ms, time_utc, open, high, low, close, volume` |
 | BT_Summary, BT_Trades, BT_Equity, BT_Sweep, BT_WalkForward, BT_MonteCarlo, BT_Compare, BT_LiveVsBacktest | backtest stages | *overwritten* each run |
@@ -49,9 +51,13 @@ columns at the end is safe.
 | `DASHBOARD_KEY` | secret | owner |
 | `TV_WEBHOOK_SECRET` | secret, optional | owner |
 | `TELEGRAM_BOT_TOKEN` | secret, optional | owner |
+| `DASHBOARD_URL` | web app link ending `/dev` (daily panel) — used by Show dashboard URL and Check installation | owner |
+| `WEBHOOK_URL` | web app link ending `/exec`, optional (TradingView/Telegram) | owner |
 | `BOT_STATE` | JSON: position, entry, stop, barsInTrade, lastBarProcessed | monitor |
 | `PAPER_STATE` | JSON: cash, units, fees, peak, startedAt, lastSnapshotBar… | paper broker |
 | `LAST_MONITOR_RUN` | ms timestamp | monitor |
+| `CH_STATE`, `CH_PAPER_STATE` | challenger position state and paper book (same shapes as `BOT_STATE` / `PAPER_STATE`) | challenger |
+| `CH_START` | JSON: start time, BTC price and live paper equity when the challenger began | challenger |
 | `LIVE_STRATEGY` | JSON overrides layered over `CONFIG.STRATEGY` | lab promote / revert |
 | `LAB_TRIED` | count of experiments run | lab |
 | `LAB_HOLDOUT_USES` | count of holdout tests | lab promote |
@@ -66,8 +72,8 @@ Check installation · Test data feed · Test live price · Dump indicators ·
 **Backtesting**: build/import/update history, quick, detailed, sweep, walk-forward, Monte
 Carlo, TV compare, live decay, full automatic run ·
 **Lab**: add starters, run now, ask Claude, promote (holdout), show live, revert ·
-**Live**: check now, daily brief, grade, ask the agent, paper account, AI gate report, dashboard URL ·
-**TradingView**: test webhook · Show scorecard · **Reset**: position state, paper account.
+**Live**: check now, daily brief, grade, ask the agent, paper account, AI gate report, challenger vs current, dashboard URL ·
+**TradingView**: test webhook · Show scorecard · **Reset**: position state, paper account, challenger.
 
 `checkInstall()` / `installChecks_(skipApi)` detect stale files by looking for a function
 that exists only in the current version of each file. When adding a file or a
@@ -78,6 +84,9 @@ version-defining function, add a check there.
 - Code reaches Apps Script via `clasp push` from this folder (master copy).
 - Triggers and menu run the latest **saved/pushed** code immediately.
 - Panel for daily use: the `/dev` test-deployment URL + `?k=DASHBOARD_KEY` (owner login only).
+- Links come from the `DASHBOARD_URL` / `WEBHOOK_URL` Script Properties, not
+  `ScriptApp.getService().getUrl()` — that returned a deployment ID that no longer existed
+  ("Sorry, unable to open the file at present").
 - `/exec` (Web app deployment) is only needed for webhooks; update it via Manage
   deployments → edit → New version, never a new deployment (URL would change).
 - A broken push breaks the live monitor too. Run Check installation after every push.

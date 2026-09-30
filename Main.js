@@ -41,6 +41,11 @@ function setup() {
       .inTimezone(CONFIG.TZ).create();
   }
 
+  // Challenger paper account: its own candles, its own schedule.
+  if (CONFIG.CHALLENGER && CONFIG.CHALLENGER.enabled) {
+    ScriptApp.newTrigger('runChallenger').timeBased().everyMinutes(15).create();
+  }
+
   logLine_('INFO', 'Setup complete. Triggers installed.');
   Logger.log('Setup done. Now run testFeed(), then backtest(), before trusting anything.');
 }
@@ -243,6 +248,7 @@ function onOpen() {
       .addItem('Ask the agent', 'askAgentPrompt')
       .addItem('Show paper account', 'showPaperAccount')
       .addItem('AI gate report (shadow)', 'showGateReport')
+      .addItem('Challenger vs current', 'showChallengerReport')
       .addItem('Show dashboard URL', 'showDashboardUrl'))
     .addSubMenu(ui.createMenu('TradingView')
       .addItem('Send a test webhook', 'testTradingViewWebhook'))
@@ -250,7 +256,8 @@ function onOpen() {
     .addItem('Show scorecard', 'showScorecard')
     .addSubMenu(ui.createMenu('Reset')
       .addItem('Reset position state', 'resetBotState')
-      .addItem('Reset paper account', 'resetPaperAccount'))
+      .addItem('Reset paper account', 'resetPaperAccount')
+      .addItem('Reset challenger', 'resetChallenger'))
     .addToUi();
 }
 
@@ -363,6 +370,11 @@ function installChecks_(skipApi) {
   check('Lab.gs', () => need(typeof runLab === 'function' && typeof entryBlockedBy_ === 'function' &&
                              CONFIG.LAB !== undefined, 'Lab.gs (and Strategy.gs, Config.gs)'));
   check('AutoBacktest.gs', () => need(typeof runAutoBacktest === 'function', 'AutoBacktest.gs'));
+  check('Challenger.gs', () => {
+    need(typeof runChallenger === 'function' && CONFIG.CHALLENGER !== undefined && paperOnSignal_.length === 3,
+         'Challenger.gs (and Config.gs, PaperBroker.gs)');
+    return CONFIG.CHALLENGER.enabled ? 'on: ' + CONFIG.CHALLENGER.name : 'off';
+  });
   check('AiGate.gs', () => {
     need(typeof gateOnBar_ === 'function' && CONFIG.GATE !== undefined, 'AiGate.gs (and Config.gs)');
     return 'mode ' + CONFIG.GATE.mode + ', model ' + CONFIG.GATE.model;
@@ -416,11 +428,14 @@ function installChecks_(skipApi) {
     if (CONFIG.LAB.autoEnabled && t.indexOf('runLab') === -1) {
       return { todo: 'run setup() again to add the nightly research lab' };
     }
+    if (CONFIG.CHALLENGER && CONFIG.CHALLENGER.enabled && t.indexOf('runChallenger') === -1) {
+      return { todo: 'run setup() again to start the challenger' };
+    }
     return t.join(', ');
   });
   check('Web app', () => {
-    const u = ScriptApp.getService().getUrl();
-    return u ? u : { todo: 'Deploy → New deployment → Web app' };
+    const w = webAppUrl_('DASHBOARD_URL');
+    return w.url ? w.url : { todo: w.error };
   });
 
   return lines;

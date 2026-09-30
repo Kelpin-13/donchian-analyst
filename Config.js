@@ -90,6 +90,18 @@ const CONFIG = {
     minTradesToJudge: 20        // the report refuses to call a winner before this many closed trades
   },
 
+  // Challenger (Challenger.gs): a second PAPER account running the same rules
+  // (decideAtBar_) on different candles/settings, side by side with the live
+  // strategy. It never touches the live position or paper account. Compare with
+  // Live → Challenger vs current, or the dashboard's Paper tab.
+  CHALLENGER: {
+    enabled: true,
+    name: '1h candles, 20/10',
+    intervalMinutes: 60,        // Coinbase only. 60 = 1-hour candles
+    overrides: {},              // strategy settings that differ from STRATEGY, e.g. {"breakoutLookback": 10}
+    candlesToFetch: 400
+  },
+
   AGENT: {
     enabled: true,        // false = fall back to the one-shot analyst
     maxTurns: 6,          // hard cap on tool-loop iterations
