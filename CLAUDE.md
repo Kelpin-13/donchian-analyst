@@ -50,6 +50,8 @@ system in Google Apps Script, with a Claude-powered analyst. Focus: gold (XAUUSD
 | `Dashboard.js` / `DashboardPage.html` | Read-only web control panel, 5 tabs |
 | `Main.js` | Triggers (`setup`), monitor loop, menu, `checkInstall` |
 | `donchian_analyst.pine` | Same strategy in Pine v6 for TradingView — not uploaded to Apps Script |
+| `mt5/DonchianGold.mq5` | MT5 Expert Advisor: gold H4, long + short, **demo only**. Mirrors `research/daytrade.js` (H4 hold-overnight, both). Compile with MetaEditor; install under `MQL5/Experts/DonchianAnalyst/` |
+| `research/` | Node research on the broker's MT5 exports in `data/` (git-ignored): `daytrade.js` (day-trading vs H4 study), `parity_mt5.js` (EA vs research, trade by trade) |
 
 ## Rules that must not be broken
 
@@ -69,6 +71,9 @@ system in Google Apps Script, with a Claude-powered analyst. Focus: gold (XAUUSD
    promotes something. After a change, confirm a backtest with defaults gives identical trades.
 6. **Pine parity.** Any change to the rules in `Strategy.js` needs the same change in
    `donchian_analyst.pine`, or the TradingView cross-check will flag disagreements. Say so.
+   **EA parity:** `mt5/DonchianGold.mq5` and `research/daytrade.js` are the same gold rules in two
+   languages. Change both together, then re-run the Strategy Tester and `node research/parity_mt5.js`
+   (must report PASS) before the EA trades again.
 7. **The lab never promotes by itself.** Promotion needs the holdout test and the owner's yes.
    Don't loosen lab thresholds to make an experiment pass.
 8. **The agent's tools stay read-only.** The tool list is the security boundary.
