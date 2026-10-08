@@ -12,7 +12,7 @@ column, property or trigger — other code (and the web panel) reads them by nam
 | `runGrader` | 11:00 | grades notes ≥12 bars old; reconciles Crosscheck |
 | `runAutoBacktest` | Sunday 09:00 | all backtest stages → BT_Log row + alert; then Claude lab proposals |
 | `runLab` | 02:00 | runs QUEUED experiments within a 4.5-min budget |
-| `runChallenger` | every 15 min | challenger paper account: acts once per closed `CHALLENGER.intervalMinutes` candle (skips without fetching otherwise) |
+| `runChallenger` | every 15 min | challenger: each market acts once per closed `CHALLENGER.intervalMinutes` candle; skips without fetching otherwise; gold backs off 30 min when no new bar (weekends); stops after 4 min and catches up next run |
 | `processTelegramQueue` | one-off, ~1s after a Telegram message | answers queued questions |
 
 `setup()` deletes **all** triggers first, then installs these. Re-run it after adding a job.
@@ -31,7 +31,9 @@ Sheets marked *overwritten* are replaced on every run; everything else is append
 | Log | `logLine_` | levels INFO / WARN / ERROR / SIGNAL; trimmed to 2,000 rows |
 | Trace | agent loop | every tool call |
 | Gate | monitor (AI gate, shadow) | one row per verdict; `FinalR` filled when the trade closes (`GATE_HEADERS`) |
-| Ch_Trades, Ch_Equity | `runChallenger` | challenger's fills and per-bar equity; same columns as PaperTrades / Equity |
+| MM_Trades, MM_Equity | `runChallenger` | challenger fills and per-bar equity for every market: a leading **Market** column, then the PaperTrades / Equity columns |
+| MM_Backtest | `challengerBacktest` | one row per market per run: 3-year return, trades, PF, drawdown, year by year, avg R, cost per side |
+| Ch_Trades, Ch_Equity | — | left over from the first (1h BTC) challenger; no longer written, safe to delete |
 | Crosscheck | webhook + monitor | status PENDING / MATCH / TV_ONLY / APPS_SCRIPT_ONLY |
 | History | `buildHistory`, `updateHistory`, `importTradingViewCsv` | `t_ms, time_utc, open, high, low, close, volume` |
 | BT_Summary, BT_Trades, BT_Equity, BT_Sweep, BT_WalkForward, BT_MonteCarlo, BT_Compare, BT_LiveVsBacktest | backtest stages | *overwritten* each run |
@@ -56,8 +58,11 @@ columns at the end is safe.
 | `BOT_STATE` | JSON: position, entry, stop, barsInTrade, lastBarProcessed | monitor |
 | `PAPER_STATE` | JSON: cash, units, fees, peak, startedAt, lastSnapshotBar… | paper broker |
 | `LAST_MONITOR_RUN` | ms timestamp | monitor |
-| `CH_STATE`, `CH_PAPER_STATE` | challenger position state and paper book (same shapes as `BOT_STATE` / `PAPER_STATE`) | challenger |
-| `CH_START` | JSON: start time, BTC price and live paper equity when the challenger began | challenger |
+| `CH_STATE_<ID>`, `CH_PAPER_<ID>` | per challenger market: position state (+ `lastClose`, `retryAt`) and paper book | challenger |
+| `CH_START`, `CH_START_<ID>` | comparison start (time, live paper equity) and each market's start (time, price) | challenger |
+| `CH_VERSION` | challenger name/interval/overrides; a change clears every `CH_` key and starts over | challenger |
+| `TWELVEDATA_API_KEY` | secret — Twelve Data key (free plan), needed for gold and forex in the challenger | owner |
+| `OANDA_API_KEY` | secret, optional — OANDA v20 token; not available to OANDA Global Markets (MT5-only) accounts | owner |
 | `LIVE_STRATEGY` | JSON overrides layered over `CONFIG.STRATEGY` | lab promote / revert |
 | `LAB_TRIED` | count of experiments run | lab |
 | `LAB_HOLDOUT_USES` | count of holdout tests | lab promote |
@@ -72,7 +77,7 @@ Check installation · Test data feed · Test live price · Dump indicators ·
 **Backtesting**: build/import/update history, quick, detailed, sweep, walk-forward, Monte
 Carlo, TV compare, live decay, full automatic run ·
 **Lab**: add starters, run now, ask Claude, promote (holdout), show live, revert ·
-**Live**: check now, daily brief, grade, ask the agent, paper account, AI gate report, challenger vs current, dashboard URL ·
+**Live**: check now, daily brief, grade, ask the agent, paper account, AI gate report, challenger vs current, challenger: backtest each market, dashboard URL ·
 **TradingView**: test webhook · Show scorecard · **Reset**: position state, paper account, challenger.
 
 `checkInstall()` / `installChecks_(skipApi)` detect stale files by looking for a function

@@ -24,6 +24,10 @@ const EQUITY_HEADERS = ['Time', 'BarTime', 'Price', 'Cash$', 'PositionValue$', '
  */
 const LIVE_BOOK = { stateKey: 'PAPER_STATE', tradesSheet: 'PaperTrades', equitySheet: 'Equity' };
 
+/** Books with a `tag` share their sheets with other books: rows get a leading Market column. */
+function bookHeaders_(book, headers) { return book && book.tag ? ['Market'].concat(headers) : headers; }
+function bookRow_(book, row) { return book && book.tag ? [book.tag].concat(row) : row; }
+
 function getPaper_(book) {
   const raw = PropertiesService.getScriptProperties().getProperty((book || LIVE_BOOK).stateKey);
   if (raw) return JSON.parse(raw);
@@ -45,24 +49,29 @@ function resetPaperAccount() {
 
 /**
  * Called by runMonitor() whenever the rules engine produces a signal.
- * `sig` is the object from decideAtBar_(). `book` and `riskPct` are only
- * passed by the challenger; the live account uses the defaults.
+ * `sig` is the object from decideAtBar_(). `book`, `riskPct` and `livePrice`
+ * are only passed by the challenger; the live account uses the defaults
+ * (its own book, CONFIG risk, and the CONFIG.MARKET ticker).
  */
-function paperOnSignal_(sig, book, riskPct) {
+function paperOnSignal_(sig, book, riskPct, livePrice) {
   if (!CONFIG.PAPER.enabled) return null;
   const P = CONFIG.PAPER;
   const acct = getPaper_(book);
-  const s = sheet_((book || LIVE_BOOK).tradesSheet, PAPER_TRADE_HEADERS);
+  const s = sheet_((book || LIVE_BOOK).tradesSheet, bookHeaders_(book, PAPER_TRADE_HEADERS));
   const risk = riskPct === undefined ? CONFIG.STRATEGY.riskPerTradePct : riskPct;
 
-  let live;
-  try { live = fetchTickerPrice_(); }
-  catch (e) {
-    live = sig.price;
-    logLine_('WARN', 'Ticker fetch failed, paper fill uses signal close: ' + e.message);
+  let live = livePrice;
+  if (!(live > 0)) {
+    try { live = fetchTickerPrice_(); }
+    catch (e) {
+      live = sig.price;
+      logLine_('WARN', 'Ticker fetch failed, paper fill uses signal close: ' + e.message);
+    }
   }
 
-  const fee = P.feePct / 100, slip = P.slippagePct / 100;
+  // A book may carry its own costs (e.g. spread-only gold/FX); the live account uses PAPER's.
+  const fee = (book && book.feePct !== undefined ? book.feePct : P.feePct) / 100;
+  const slip = (book && book.slippagePct !== undefined ? book.slippagePct : P.slippagePct) / 100;
 
   if (sig.type === 'ENTRY_LONG') {
     if (acct.units > 0) { logLine_('WARN', 'Paper: entry ignored, already long'); return null; }
@@ -77,8 +86,8 @@ function paperOnSignal_(sig, book, riskPct) {
     const units = Math.max(0, Math.min(byRisk, byCap, byCash));
 
     if (units <= 0) {
-      s.appendRow([new Date(), 'BUY', sig.type, new Date(sig.barTime), sig.price, fill, 0, 0, 0, 0,
-                   acct.cash, acct.cash, '', '', 'Skipped: price already at or below stop']);
+      s.appendRow(bookRow_(book, [new Date(), 'BUY', sig.type, new Date(sig.barTime), sig.price, fill, 0, 0, 0, 0,
+                   acct.cash, acct.cash, '', '', 'Skipped: price already at or below stop']));
       return null;
     }
 
@@ -93,10 +102,10 @@ function paperOnSignal_(sig, book, riskPct) {
     acct.equityAtEntry = equity;
     acct.feesPaid += feeAmt;
 
-    s.appendRow([new Date(), 'BUY', sig.type, new Date(sig.barTime), sig.price, round_(fill),
+    s.appendRow(bookRow_(book, [new Date(), 'BUY', sig.type, new Date(sig.barTime), sig.price, round_(fill),
                  round_((fill - live) * units), round_(units * 1e6) / 1e6, round_(notional), round_(feeAmt),
                  round_(acct.cash), round_(acct.cash + units * live), '', '',
-                 'Stop ' + round_(sig.stop) + ', risking $' + round_(riskBudget)]);
+                 'Stop ' + round_(sig.stop) + ', risking $' + round_(riskBudget)]));
     setPaper_(acct, book);
     return { side: 'BUY', fill: fill, units: units };
   }
@@ -115,10 +124,10 @@ function paperOnSignal_(sig, book, riskPct) {
   acct.trades++;
   if (pnl > 0) acct.wins++;
 
-  s.appendRow([new Date(), 'SELL', sig.type, new Date(sig.barTime), sig.price, round_(fill),
+  s.appendRow(bookRow_(book, [new Date(), 'SELL', sig.type, new Date(sig.barTime), sig.price, round_(fill),
                round_((live - fill) * acct.units), round_(acct.units * 1e6) / 1e6, round_(proceeds), round_(feeAmt),
                round_(acct.cash), round_(acct.cash), round_(pnl),
-               round_(pnl / acct.equityAtEntry * 100), 'Held ' + sig.barsHeld + ' bars']);
+               round_(pnl / acct.equityAtEntry * 100), 'Held ' + sig.barsHeld + ' bars']));
 
   acct.units = 0; acct.entryFill = null; acct.entryTime = null;
   acct.entryCost = 0; acct.entryFee = 0; acct.equityAtEntry = null;
@@ -138,11 +147,11 @@ function paperSnapshot_(barTime, price, book) {
   if (equity > acct.peakEquity) acct.peakEquity = equity;
   const dd = (acct.peakEquity - equity) / acct.peakEquity * 100;
 
-  sheet_((book || LIVE_BOOK).equitySheet, EQUITY_HEADERS).appendRow([
+  sheet_((book || LIVE_BOOK).equitySheet, bookHeaders_(book, EQUITY_HEADERS)).appendRow(bookRow_(book, [
     new Date(), new Date(barTime), round_(price), round_(acct.cash), round_(posVal), round_(equity),
     round_((equity / CONFIG.PAPER.startingEquityUSD - 1) * 100), round_(-dd),
     acct.units > 0 ? 'LONG' : 'FLAT'
-  ]);
+  ]));
 
   acct.lastSnapshotBar = barTime;
   setPaper_(acct, book);

@@ -94,12 +94,46 @@ const CONFIG = {
   // (decideAtBar_) on different candles/settings, side by side with the live
   // strategy. It never touches the live position or paper account. Compare with
   // Live → Challenger vs current, or the dashboard's Paper tab.
+  // Changing the name, interval, overrides or market list starts a NEW comparison
+  // automatically (the old challenger's state is cleared on its next run).
   CHALLENGER: {
     enabled: true,
-    name: '1h candles, 20/10',
-    intervalMinutes: 60,        // Coinbase only. 60 = 1-hour candles
+    name: '4h rules on gold & FX majors',
+    intervalMinutes: 240,
     overrides: {},              // strategy settings that differ from STRATEGY, e.g. {"breakoutLookback": 10}
-    candlesToFetch: 400
+    candlesToFetch: 400,
+    // Each market is its own $1,000 paper book (PAPER.startingEquityUSD); the total is
+    // their equal-weighted average. A market joins (enabled: true) only after its 3-year
+    // result in MM_Backtest (Live → Challenger: backtest each market) has been reviewed.
+    //
+    // provider 'twelvedata' needs TWELVEDATA_API_KEY, 'oanda' needs OANDA_API_KEY (Script Properties).
+    // feePct / slippagePct are per side, % of price, and replace PAPER/BACKTEST costs for that
+    // market. Gold and FX are spread-only on most brokers: these are typical OANDA-style spreads
+    // (half the spread + a little slippage per side). Check them against your broker.
+    markets: [
+      { id: 'XAUUSD', provider: 'twelvedata', symbol: 'XAU/USD', enabled: false, feePct: 0, slippagePct: 0.02 },
+      { id: 'EURUSD', provider: 'twelvedata', symbol: 'EUR/USD', enabled: false, feePct: 0, slippagePct: 0.01 },
+      { id: 'GBPUSD', provider: 'twelvedata', symbol: 'GBP/USD', enabled: false, feePct: 0, slippagePct: 0.015 },
+      { id: 'USDJPY', provider: 'twelvedata', symbol: 'USD/JPY', enabled: false, feePct: 0, slippagePct: 0.01 },
+      { id: 'AUDUSD', provider: 'twelvedata', symbol: 'AUD/USD', enabled: false, feePct: 0, slippagePct: 0.015 },
+      // Crypto, tested Oct 2026 (all six profitable over 3 years). Off: the focus is gold & FX.
+      { id: 'BTC',  provider: 'coinbase', symbol: 'BTC-USD',  enabled: false },
+      { id: 'ETH',  provider: 'coinbase', symbol: 'ETH-USD',  enabled: false },
+      { id: 'SOL',  provider: 'coinbase', symbol: 'SOL-USD',  enabled: false },
+      { id: 'XRP',  provider: 'coinbase', symbol: 'XRP-USD',  enabled: false },
+      { id: 'LINK', provider: 'coinbase', symbol: 'LINK-USD', enabled: false },
+      { id: 'AVAX', provider: 'coinbase', symbol: 'AVAX-USD', enabled: false }
+    ]
+  },
+
+  // Twelve Data REST API: gold and forex candles. Free plan: 800 requests/day, 8/minute.
+  TWELVEDATA: {
+    host: 'https://api.twelvedata.com'
+  },
+
+  // OANDA v20 REST API, used for XAU_USD. Practice (demo) accounts use the fxpractice host.
+  OANDA: {
+    host: 'https://api-fxpractice.oanda.com'
   },
 
   AGENT: {

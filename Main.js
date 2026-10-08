@@ -249,6 +249,7 @@ function onOpen() {
       .addItem('Show paper account', 'showPaperAccount')
       .addItem('AI gate report (shadow)', 'showGateReport')
       .addItem('Challenger vs current', 'showChallengerReport')
+      .addItem('Challenger: backtest each market (3 years)', 'challengerBacktest')
       .addItem('Show dashboard URL', 'showDashboardUrl'))
     .addSubMenu(ui.createMenu('TradingView')
       .addItem('Send a test webhook', 'testTradingViewWebhook'))
@@ -371,9 +372,25 @@ function installChecks_(skipApi) {
                              CONFIG.LAB !== undefined, 'Lab.gs (and Strategy.gs, Config.gs)'));
   check('AutoBacktest.gs', () => need(typeof runAutoBacktest === 'function', 'AutoBacktest.gs'));
   check('Challenger.gs', () => {
-    need(typeof runChallenger === 'function' && CONFIG.CHALLENGER !== undefined && paperOnSignal_.length === 3,
+    need(typeof chRunMarket_ === 'function' && CONFIG.CHALLENGER && CONFIG.CHALLENGER.markets && paperOnSignal_.length === 4,
          'Challenger.gs (and Config.gs, PaperBroker.gs)');
-    return CONFIG.CHALLENGER.enabled ? 'on: ' + CONFIG.CHALLENGER.name : 'off';
+    if (!CONFIG.CHALLENGER.enabled) return 'off';
+    return 'on: ' + chActiveMarkets_().map(m => m.id).join(', ');
+  });
+  // One line per keyed data source the challenger lists. Fetching a few real 4h bars proves
+  // the key works AND that this plan serves 4h data for the first market.
+  ['twelvedata', 'oanda'].forEach(provider => {
+    const ms = (CONFIG.CHALLENGER.markets || []).filter(m => m.provider === provider);
+    if (!ms.length) return;
+    const keyName = CH_PROVIDER_KEYS[provider];
+    check(keyName.replace('_API_KEY', '') + ' data', () => {
+      if (!chHasKey_(ms[0])) return { todo: 'add ' + keyName + ' to Script Properties (needed for ' + ms.map(m => m.id).join(', ') + ')' };
+      const c = chCandles_(ms[0], CONFIG.CHALLENGER.intervalMinutes, 150, challengerParams_());
+      const last = c[c.length - 1];
+      return ms[0].symbol + ' ' + CONFIG.CHALLENGER.intervalMinutes / 60 + 'h bars OK: ' + c.length +
+             ' closed, last ' + utc_(last.t) + ' UTC, close ' + round_(last.c) +
+             '. In the challenger: ' + (ms.filter(m => m.enabled).map(m => m.id).join(', ') || 'none yet (backtest first)');
+    });
   });
   check('AiGate.gs', () => {
     need(typeof gateOnBar_ === 'function' && CONFIG.GATE !== undefined, 'AiGate.gs (and Config.gs)');

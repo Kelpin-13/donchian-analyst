@@ -367,17 +367,20 @@
   }
   function challengerHtml(c) {
     if (!c) return '';
-    const row = (x, extra) => '<tr>' + td(esc(x.label)) + td(x.returnPct === null ? '—' : '<span class="' + cls(x.returnPct) + '">' + pct(x.returnPct) + '</span>', 'num') +
-      td(esc(x.position || ''), 'nowrap') + extra + '</tr>';
-    const ch = c.challenger;
+    const ret = v => v === null || v === undefined ? '—' : '<span class="' + cls(v) + '">' + pct(v) + '</span>';
+    const stats = x => td(isNum(x.trades) ? esc(x.trades) : '—', 'num') + td(x.winRate === null || x.winRate === undefined ? '—' : num(x.winRate, 0) + '%', 'num') +
+      td(isNum(x.drawdownPct) ? num(x.drawdownPct, 1) + '%' : '—', 'num') + td(isNum(x.fees) ? money(x.fees) : '—', 'num');
+    const t = c.total;
+    const rows = [
+      '<tr>' + td('<strong>' + esc(c.live.label) + '</strong>') + td(ret(c.live.returnPct), 'num') + td(esc(c.live.position), 'nowrap') + td('—', 'num') + td('—', 'num') + td('—', 'num') + td('—', 'num') + '</tr>',
+      '<tr>' + td('<strong>' + esc(t.label) + '</strong>') + td(ret(t.returnPct), 'num') + td(esc(t.position), 'nowrap') + stats(t) + '</tr>'
+    ].concat(c.markets.map(x => x.waiting
+      ? '<tr>' + td('<span class="muted">&nbsp;&nbsp;' + esc(x.id) + '</span>') + td('<span class="muted small">' + esc(x.note) + '</span>', 'num') + td('') + td('') + td('') + td('') + td('') + '</tr>'
+      : '<tr>' + td('<span class="muted">&nbsp;&nbsp;' + esc(x.id) + '</span>') + td(ret(x.returnPct), 'num') + td(esc(x.position), 'nowrap') + stats(x) + '</tr>'))
+      .concat(['<tr>' + td('<span class="muted">Buy &amp; hold, same markets</span>') + td(ret(c.buyHoldPct), 'num') + td('') + td('') + td('') + td('') + td('') + '</tr>']);
     return '<section><h2>Current vs challenger — ' + num(c.days, 1) + ' days</h2>' +
       table([{ label: 'Account' }, { label: 'Return', num: 1 }, { label: 'Now' }, { label: 'Trades', num: 1 }, { label: 'Won', num: 1 },
-             { label: 'Worst drop', num: 1 }, { label: 'Fees', num: 1 }], [
-        row(c.live, td('—', 'num') + td('—', 'num') + td('—', 'num') + td('—', 'num')),
-        row(ch, td(esc(ch.trades), 'num') + td(ch.winRate === null ? '—' : num(ch.winRate, 0) + '%', 'num') +
-              td(num(ch.drawdownPct, 1) + '%', 'num') + td(money(ch.fees), 'num')),
-        '<tr>' + td('<span class="muted">Buy &amp; hold BTC</span>') + td(pct(c.buyHoldPct), 'num') + td('') + td('') + td('') + td('') + td('') + '</tr>']) +
-      '</section>';
+             { label: 'Worst drop', num: 1 }, { label: 'Fees', num: 1 }], rows) + '</section>';
   }
   const stat = (k, v) => '<div class="stat"><div class="k">' + k + '</div><div class="v">' + v + '</div></div>';
 

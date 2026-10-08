@@ -15,10 +15,14 @@ There are no exchange keys and no order endpoints, and that must stay true.
 ## How the code gets to Apps Script
 
 - This folder is the master copy. Files are `.js` here, `.gs` in Apps Script (clasp converts).
+- Before handing over a change: run `node tests/run.js --against HEAD` (offline, ~45 s). It must say
+  ALL PASSED; `--against` proves the live strategy still matches the last commit.
 - After editing: the owner runs `clasp push`, then checks **Trading Agent → Check installation**
   in the sheet, then commits to GitHub. Never run `clasp push` yourself unless asked.
 - `clasp push` uploads every `.js`/`.html`/`appsscript.json`. `.claspignore` keeps
-  `README.md`, `CLAUDE.md`, `docs/` and `donchian_analyst.pine` out of Apps Script.
+  `README.md`, `CLAUDE.md`, `docs/`, `tests/` and `donchian_analyst.pine` out of Apps Script.
+  `tests/` must stay in `.claspignore`: clasp uploads `.js` in subfolders, and test files would
+  share Apps Script's global scope.
 - All files share ONE global scope. Function names must be unique across every file,
   or one silently overrides another. Check for duplicates after any change.
 - Functions ending in `_` are private: they can't be run from the menu or called from
@@ -36,7 +40,7 @@ There are no exchange keys and no order endpoints, and that must stay true.
 | `Backtest.js` | `simulate_()` engine (next-open fills, fees, slippage, risk sizing), metrics, sweep, walk-forward, Monte Carlo |
 | `AutoBacktest.js` | Weekly run of every stage, verdict rules, one permanent row per run in BT_Log |
 | `Lab.js` | Research lab: queued experiments, locked holdout year, promote/revert with human approval |
-| `Challenger.js` | Second paper account: same `decideAtBar_()` on other candles/settings (`CONFIG.CHALLENGER`), side by side with live. Never touches the live position |
+| `Challenger.js` | Multi-market paper challenger: same `decideAtBar_()` on every enabled market in `CONFIG.CHALLENGER.markets` (gold & FX via Twelve Data; crypto via Coinbase, off), one book each with its own costs, side by side with live. Never touches the live position |
 | `PaperBroker.js` | Paper account: fills at the live price with fees and slippage |
 | `AiGate.js` | Shadow-only three-field verdict (action, conviction, risk_flag) logged to the Gate sheet and graded against real trades. Never changes a trade |
 | `Analyst.js` / `Agent.js` | One-shot Claude calls / tool-calling agent loop with READ-ONLY tools |

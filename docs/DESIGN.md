@@ -190,7 +190,12 @@ related changes: indicator arrays align with candles; Donchian excludes the curr
 EMA seed = SMA; state machine never double-enters; live monitor signals == backtest
 signals; ledger reconciles with equity; no hidden leverage; filters-off parity; lab
 verdict paths; every panel endpoint rejects a wrong key; no Date objects in panel payloads.
-The harness is not in the repo yet — adding it as `tests/` would be a good first task.
+These now live in `tests/` (`node tests/run.js`, offline, ~45 s): a fake Apps Script world whose
+UrlFetchApp serves Coinbase and OANDA responses from seeded synthetic prices, so the real data
+adapters run. It checks live/challenger isolation, book reconciliation, no look-ahead, gold's
+weekend handling, the AI gate, history, web-app links and the per-market backtest.
+`--against <git ref>` also proves the live strategy's signals, fills and equity match that
+commit. Each check was confirmed to fail when the code it guards is deliberately broken.
 
 ## 13. AI gate (`AiGate.js`) — shadow only
 
@@ -228,23 +233,42 @@ state and paper account). Refusal fallback (`fallbacks: "default"`) is enabled.
 
 Cost: one call per entry plus one per 4h bar in a trade — a few calls a day at most.
 
-## 14. Challenger (`Challenger.js`)
+## 14. Challenger (`Challenger.js`) — multi-market
 
-A second paper account that runs the same `decideAtBar_()` with
-`CONFIG.STRATEGY + CHALLENGER.overrides` on `CHALLENGER.intervalMinutes` candles (first
-challenger: 1h candles, 20/10). It exists because one month of live results says little;
-two settings over the *same* month at least face the same market.
+The live strategy trades BTC 4h only: 2–3 signals a month. The challenger runs the same
+`decideAtBar_()` (with `CONFIG.STRATEGY + CHALLENGER.overrides`) on every enabled market in
+`CHALLENGER.markets`. The owner's focus is **gold and major FX pairs** (XAU/USD, EUR/USD,
+GBP/USD, USD/JPY, AUD/USD via Twelve Data). Six crypto markets stay listed but off: their
+Oct 2023 – Sep 2026 backtest (untuned rules) was profitable on all six, +36% equal split, but
+trailed buy & hold (+166%). **Every market starts `enabled: false`** and is switched on only after
+its row in MM_Backtest has been reviewed — the rules were built and tested on crypto, not FX.
 
-- Isolation: own state (`CH_STATE`), own paper book (`CH_PAPER_STATE`, Ch_Trades, Ch_Equity),
-  own trigger. `PaperBroker.js` takes an optional book; the live account is the default
-  (`LIVE_BOOK`), so live calls are unchanged.
-- No agent note, AI gate, alert or cross-check — paper and log only.
-- Fair start: `CH_START` records BTC and the live paper equity at the challenger's first bar;
-  both accounts and buy & hold are reported from that moment.
-- Verified: replaying 129 days of real Coinbase data in 15-minute steps, the live strategy's
-  signals, fills and equity snapshots were identical to the pre-challenger code, with the
-  challenger on or off. Challenger fills alternate, trades reconcile with its book.
-- Coinbase only (it pages the public candles API at any interval).
+- One $1,000 paper book per market (`CH_PAPER_<ID>`), own position state (`CH_STATE_<ID>`), own
+  start (`CH_START_<ID>`). The total is the equal-weighted average of the markets' returns, the
+  same way the backtest combined them. Fills use the market's own price.
+- Per-market costs (`feePct`, `slippagePct`) replace PAPER/BACKTEST costs. Gold and FX are
+  spread-only on most brokers (0.01–0.02% per side assumed); crypto keeps 0.10% fee + 0.05% slip.
+  Overnight swap/financing on CFDs is **not** modelled.
+- Exposure stays capped at 100% of the book (no leverage). On FX a 2×ATR stop is often < 1% of
+  price, so the 1% risk budget would need > 100% exposure and is capped: FX trades risk less
+  than 1% and returns look small. Judge FX on profit factor, win rate and avg R, not % return.
+  Allowing leverage is an owner decision, not a tuning knob.
+- `PaperBroker.js` takes an optional book (with a `tag` → leading Market column, so every market
+  shares MM_Trades / MM_Equity; and optional `feePct` / `slippagePct`), risk % and live price.
+  The live account passes none of them.
+- Renaming the challenger, or changing its interval or overrides, clears all `CH_` keys and starts
+  a new comparison. Switching a market on later does not.
+- Twelve Data: `/time_series` (4h, `timezone=UTC`, `order=ASC`, up to 5000 bars ≈ 3.2 years of 24/5
+  data in one call) and `/price`. The key travels in the `Authorization: apikey …` header, never the
+  URL. Errors arrive as HTTP 200 with `status: "error"`; `twelveGet_` treats both as errors. Free
+  plan: 800 requests/day, 8/minute — the challenger needs ~6 a day per market. Whether the free
+  plan serves 4h bars for XAU/USD was unconfirmed when built: Check installation fetches them.
+- OANDA v20 is kept as an option (`provider: 'oanda'`), but OANDA Global Markets accounts are
+  MT5-only and get no v20 token.
+- Gold and FX are 24/5: no weekend bars; when no new bar has closed a market backs off 30 minutes.
+- No agent note, AI gate, alert or cross-check: paper and log only.
+- `challengerBacktest()` (menu) backtests every listed market, enabled or not, over 3 years into
+  MM_Backtest, each with its own costs. It is how a market is vetted before it is switched on.
 
-Switching live to the challenger is the owner's call and changes the candle interval, the
-backtest history and the Pine chart timeframe — backtest it on full history first.
+Switching live to multi-market is the owner's call, after the comparison and a review of
+MM_Backtest — and it would need multi-symbol state in the live monitor, journal and Pine charts.
