@@ -1,8 +1,9 @@
 # Donchian Analyst — project briefing
 
-Personal research project: a Bitcoin market monitor and paper-trading system in
-Google Apps Script, with a Claude-powered analyst. **It never places real orders.**
-There are no exchange keys and no order endpoints, and that must stay true.
+Personal quant research project: a rules-based market monitor, backtester and paper-trading
+system in Google Apps Script, with a Claude-powered analyst. Focus: gold (XAUUSD) day trading.
+**It never trades real money.** Automated orders are allowed only on an MT5 **demo** account
+(owner decision, 9 Oct 2026), and the code must refuse to trade on any live account.
 
 ## Read before changing things
 
@@ -52,7 +53,12 @@ There are no exchange keys and no order endpoints, and that must stay true.
 
 ## Rules that must not be broken
 
-1. **No real trading.** Never add exchange API keys, order placement, or anything that moves money.
+1. **Demo only, never real money.** Automated order placement is allowed only on a demo account:
+   the MT5 Expert Advisor must check `ACCOUNT_TRADE_MODE == ACCOUNT_TRADE_MODE_DEMO` at start-up and
+   before every order, and stop trading if it isn't. Never add live-account credentials, live order
+   endpoints, or anything that can move real money. Apps Script itself still places no orders.
+   Every automated order carries a stop loss; no averaging down, no martingale, no manual override
+   of the rules (the owner's aim: no reckless or greedy decisions).
 2. **Secrets live in Script Properties** (`ANTHROPIC_API_KEY`, `DASHBOARD_KEY`, `TV_WEBHOOK_SECRET`,
    `TELEGRAM_BOT_TOKEN`). Never put a key or token in a code file.
 3. **One strategy.** Live, backtest and lab all call `decideAtBar_()`. Never create a separate copy
