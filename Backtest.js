@@ -505,7 +505,19 @@ function runSweep() {
  * to the training results — the gap is how much you were fooling yourself.
  */
 function runWalkForward() {
-  const candles = loadHistory_();
+  return walkForward_(loadHistory_(), {});
+}
+
+/**
+ * The walk-forward engine, for any market's candles. opts: { sheet (default
+ * 'BT_WalkForward'), feePct, slippagePct } — costs default to CONFIG.BACKTEST.
+ * The live strategy (runWalkForward) and the challenger markets share it.
+ */
+function walkForward_(candles, opts) {
+  const o = opts || {};
+  const costs = {};
+  if (o.feePct !== undefined) costs.feePct = o.feePct;
+  if (o.slippagePct !== undefined) costs.slippagePct = o.slippagePct;
   const B = CONFIG.BACKTEST;
   const base = CONFIG.STRATEGY;
   const T = B.wfTrainBars, S = B.wfTestBars;
@@ -538,8 +550,8 @@ function runWalkForward() {
     let best = null;
     B.sweepBreakout.forEach(b => B.sweepStopMult.forEach(mult => {
       const p = Object.assign({}, base, { breakoutLookback: b, stopAtrMult: mult });
-      const r = simulate_(candles, p, { startIndex: trainStart, endIndex: trainEnd,
-                                        series: seriesFor(p), closeAtEnd: true });
+      const r = simulate_(candles, p, Object.assign({ startIndex: trainStart, endIndex: trainEnd,
+                                        series: seriesFor(p), closeAtEnd: true }, costs));
       if (r.trades.length < B.wfMinTrades) return;
       const m = metrics_(r, candles);
       const sc = score(m);
@@ -547,10 +559,10 @@ function runWalkForward() {
     }));
 
     const chosen = best ? best.p : base;
-    const test = simulate_(candles, chosen, { startIndex: testStart, endIndex: testEnd,
-      series: seriesFor(chosen), closeAtEnd: true, startingEquity: oosEq });
-    const fixed = simulate_(candles, base, { startIndex: testStart, endIndex: testEnd,
-      series: seriesFor(base), closeAtEnd: true, startingEquity: fixedEq });
+    const test = simulate_(candles, chosen, Object.assign({ startIndex: testStart, endIndex: testEnd,
+      series: seriesFor(chosen), closeAtEnd: true, startingEquity: oosEq }, costs));
+    const fixed = simulate_(candles, base, Object.assign({ startIndex: testStart, endIndex: testEnd,
+      series: seriesFor(base), closeAtEnd: true, startingEquity: fixedEq }, costs));
     const tm = metrics_(test, candles);
 
     folds.push({
@@ -581,7 +593,7 @@ function runWalkForward() {
   const lastTest = warm + T + folds.length * S - 1;
   const bhAll = (candles[lastTest].c / candles[firstTest].o - 1) * 100;
 
-  const s = freshSheet_('BT_WalkForward');
+  const s = freshSheet_(o.sheet || 'BT_WalkForward');
   const head = ['Fold', 'Train window', 'Test window', 'Chosen params', 'Train return %', 'Train trades',
                 'Test return %', 'Test trades', 'Fixed-params test %', 'Buy & hold test %'];
   const body = folds.map((f, i) => [i + 1, f.train, f.test, f.chosen, fmt_(f.isRet), f.isTrades,

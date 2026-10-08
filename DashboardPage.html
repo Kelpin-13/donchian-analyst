@@ -69,6 +69,13 @@
   .tabs button[aria-selected="true"] { color: var(--ink); background: var(--sheet); box-shadow: var(--shadow); }
   .tabs .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--stop); margin-left: 7px; vertical-align: 2px; box-shadow: 0 0 0 3px var(--bad-bg); }
 
+  /* ---------- market switcher (Live tab) ---------- */
+  .markets { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  .markets button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 14px; border-radius: 10px; font: 600 14px var(--body); }
+  .markets button small { font: 500 10px/1.2 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--graphite); }
+  .markets button[aria-pressed="true"] { border-color: var(--long); box-shadow: 0 0 0 3px var(--glow); }
+  .channel .role { margin-bottom: 10px; }
+
   /* ---------- cards ---------- */
   h2 { font: 500 12px/1.2 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--graphite); margin: 0 0 14px; }
   section { background: var(--sheet); border: 1px solid var(--rule); border-radius: 14px; padding: 18px 20px; margin: 0 0 16px; box-shadow: var(--shadow); min-width: 0; overflow: hidden; }
@@ -166,12 +173,15 @@
   const LOADING = { live: 'Fetching the latest bar and your paper account.', paper: 'Loading your paper account.',
     backtests: 'Loading backtest results.', lab: 'Loading the research lab.', system: 'Checking the system.' };
   let tab = 'live', live = null, liveAt = 0, cache = {}, charts = {}, checks = null;
+  let market = 'LIVE';
+  try { market = localStorage.getItem('da-market') || 'LIVE'; } catch (e) {}
 
   /* ---------- helpers ---------- */
   const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const isNum = v => v !== '' && v !== null && v !== undefined && !isNaN(Number(v));
+  // Whole dollars from $10,000 (BTC); cents below that (gold, account values).
   const money = v => !isNum(v) ? '—'
-    : '$' + Number(v).toLocaleString('en-US', { maximumFractionDigits: Math.abs(v) >= 1000 ? 0 : 2, minimumFractionDigits: Math.abs(v) >= 1000 ? 0 : 2 });
+    : '$' + Number(v).toLocaleString('en-US', { maximumFractionDigits: Math.abs(v) >= 10000 ? 0 : 2, minimumFractionDigits: Math.abs(v) >= 10000 ? 0 : 2 });
   const pct = v => !isNum(v) ? '—' : (v > 0 ? '+' : '') + Number(v).toFixed(2) + '%';
   const num = (v, dp) => !isNum(v) ? '—' : Number(v).toFixed(dp === undefined ? 2 : dp);
   const cls = v => v > 0 ? 'pos' : v < 0 ? 'neg' : '';
@@ -219,17 +229,32 @@
   /* ---------- loading ---------- */
   function load(which, quiet) {
     if (!quiet && !cache[which]) document.getElementById('app').innerHTML = '<p class="loading">' + LOADING[which] + '</p>';
-    google.script.run
+    const asked = market;
+    const runner = google.script.run
       .withSuccessHandler(d => {
+        if (which === 'live' && asked !== market) return;          // the switcher moved on meanwhile
         cache[which] = d;
         if (which === 'live') { live = d; liveAt = Date.now(); statusLine(); }
         if (which === tab) render();
       })
       .withFailureHandler(err => {
+        if (which === 'live' && asked !== 'LIVE' && /Unknown or disabled market/.test(err && err.message)) {
+          market = 'LIVE'; try { localStorage.setItem('da-market', market); } catch (e) {}
+          return load('live', quiet);                               // that market was switched off: fall back
+        }
         const msg = err && err.message === 'Locked' ? 'This link is missing the right key. Use Show dashboard URL in the sheet menu to get it again.'
           : 'Couldn\'t load: ' + (err && err.message) + '. Retrying in ' + REFRESH_S + 's.';
         if (which === tab) document.getElementById('app').innerHTML = '<p class="empty err">' + esc(msg) + '</p>';
-      })[ENDPOINT[which]](KEY);
+      });
+    if (which === 'live') runner[ENDPOINT[which]](KEY, market); else runner[ENDPOINT[which]](KEY);
+  }
+
+  function selectMarket(id) {
+    if (id === market) return;
+    market = id;
+    try { localStorage.setItem('da-market', id); } catch (e) {}
+    cache.live = null;
+    load('live');
   }
 
   function selectTab(t) {
@@ -249,7 +274,7 @@
     document.getElementById('status').innerHTML =
       '<strong>' + esc(d.symbol) + '</strong><span>' + money(d.price) + '</span>' +
       '<span>' + d.interval / 60 + 'h candles on ' + esc(d.provider) + '</span>' +
-      '<span>Next bar closes in ' + dur(d.nextCloseAt - now) + '</span>' +
+      '<span>' + (d.closed ? 'Market closed for the weekend' : 'Next bar closes in ' + dur(d.nextCloseAt - now)) + '</span>' +
       '<span class="spacer"></span><span>Updated ' + (since < 5 ? 'just now' : since + 's ago') + '</span>' +
       '<button type="button" id="refresh">Refresh</button>';
     document.getElementById('refresh').onclick = () => { load('live', true); if (tab !== 'live') load(tab, true); };
@@ -302,11 +327,22 @@
       return '<div class="sig"><div class="head"><span class="type ' + (entry ? 'entry' : 'exit') + '">' + esc(label[s.type] || s.type) + '</span>' +
         '<span class="muted">' + esc(s.time) + '</span><span>' + money(s.price) + '</span>' + (s.verdict ? chip(s.verdict.replace('_', ' ')) : '') + '</div>' +
         (entry && s.setup ? '<p>' + esc(s.setup) + '</p>' : '') + (s.lesson ? '<p class="muted small">Lesson: ' + esc(s.lesson) + '</p>' : '') + '</div>';
-    }).join('') : '<p class="muted">No signals yet. This strategy fires a few times a month; each one appears here with the agent\'s note.</p>';
+    }).join('') : '<p class="muted">' + (d.role === 'paper'
+        ? 'No trades yet. Each entry and exit of this paper market appears here.'
+        : 'No signals yet. This strategy fires a few times a month; each one appears here with the agent\'s note.') + '</p>';
 
-    document.getElementById('app').innerHTML =
-      '<div class="channel"><div class="price">' + money(d.price) + (d.priceSource === 'live' ? '' : ' <span class="muted small">(last close)</span>') + '</div>' +
-      '<p class="verdict">' + esc(verdictText(d)) + '</p>' + gauge(d) +
+    const switcher = (d.markets || []).length > 1
+      ? '<div class="markets" role="group" aria-label="Market">' + d.markets.map(x =>
+          '<button type="button" data-market="' + esc(x.id) + '" aria-pressed="' + (x.id === d.market) + '">' + esc(x.label) +
+          '<small>' + (x.role === 'live' ? 'Live strategy' : 'Paper challenger') + '</small></button>').join('') + '</div>'
+      : '';
+    const role = d.role === 'paper'
+      ? '<span class="chip warn">Paper challenger · same rules, no alerts or notes</span>'
+      : '<span class="chip good">Live strategy</span>';
+
+    document.getElementById('app').innerHTML = switcher +
+      '<div class="channel"><div class="role">' + role + '</div><div class="price">' + money(d.price) + (d.priceSource === 'live' ? '' : ' <span class="muted small">(last close)</span>') + '</div>' +
+      '<p class="verdict">' + (d.closed ? 'Market closed for the weekend. ' : '') + esc(verdictText(d)) + '</p>' + gauge(d) +
       '<div class="legend"><span>Shaded band: the ' + d.exitLookback + '-bar low to the ' + d.breakoutLookback + '-bar high</span>' +
       '<span>ATR ' + money(d.atr) + ' (' + (d.atr / d.price * 100).toFixed(2) + '% of price)</span></div></div>' +
       '<div class="grid"><div>' +
@@ -319,9 +355,12 @@
           : '<dt>Waiting for</dt><dd>Close above ' + money(d.upper) + '</dd><dt>Trend filter</dt><dd class="' + (d.price > d.ema ? 'pos' : 'neg') + '">' + (d.price > d.ema ? 'Longs allowed' : 'Longs blocked') + '</dd>') +
         '</dl></section>' +
         (d.brief ? '<section><h2>Today\'s brief, ' + esc(d.brief.date) + '</h2><p style="margin:0 0 8px">' + esc(d.brief.summary) + '</p>' + (d.brief.risk ? '<p class="muted small" style="margin:0">' + esc(d.brief.risk) + '</p>' : '') + '</section>' : '') +
-        '<section><h2>Paper account</h2><dl class="facts"><dt>Equity</dt><dd>' + money(p.equity) + '</dd><dt>Since start</dt><dd class="' + cls(p.returnPct) + '">' + pct(p.returnPct) + '</dd></dl>' +
+        '<section><h2>' + (d.role === 'paper' ? esc(d.symbol) + ' paper book' : 'Paper account') + '</h2><dl class="facts"><dt>Equity</dt><dd>' + money(p.equity) + '</dd><dt>Since start</dt><dd class="' + cls(p.returnPct) + '">' + pct(p.returnPct) + '</dd>' +
+          (d.role === 'paper' ? '<dt>Closed trades</dt><dd>' + esc(p.trades) + '</dd>' : '') + '</dl>' +
         '<p class="small muted" style="margin:10px 0 0">Full detail in the Paper tab.</p></section>' +
       '</div></div>';
+
+    document.querySelectorAll('.markets button').forEach(b => b.addEventListener('click', () => selectMarket(b.dataset.market)));
 
     chart('pc', { type: 'line', data: { labels: d.chart.labels, datasets: [
       { label: 'Exit line', data: d.chart.lower, borderColor: css('--graphite'), borderWidth: 1, pointRadius: 0, stepped: true },

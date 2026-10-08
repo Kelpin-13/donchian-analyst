@@ -13,6 +13,10 @@ const { world, makeMarkets, H, VALID_KEYS } = require('./harness');
 let failures = 0;
 function ok(cond, msg) { console.log((cond ? 'PASS  ' : 'FAIL  ') + msg); if (!cond) failures++; }
 function section(name) { console.log('\n== ' + name); }
+/** google.script.run can't return Date objects: find any, however deep. */
+function hasDate(v) {   // instanceof fails across sandboxes, so check the internal type
+  return Object.prototype.toString.call(v) === '[object Date]' || (v !== null && typeof v === 'object' && Object.keys(v).some(k => hasDate(v[k])));
+}
 
 const T0 = Date.UTC(2026, 0, 1);
 const WARM_H = 1700;                  // enough hourly history for 400 x 4h bars
@@ -161,6 +165,42 @@ const ts = rowsOf(Hs, 'History').map(r => r[0]);
 ok(new Set(ts).size === ts.length && ts.every((t, i) => !i || t - ts[i - 1] === 4 * H), 'no duplicates, no gaps');
 
 /* ---------------------------------------------------------------- */
+section('Dashboard: gold on the Live tab');
+const D = world({ markets: MARKETS, props: Object.assign({ DASHBOARD_KEY: 'dk' }, KEYS) });   // default config: XAUUSD on
+const monday = (() => { let t = from + 2 * 24 * H; while (new Date(t).getUTCDay() !== 1) t += H; return t + 10 * H + 5 * 60000; })();
+D.setNow(monday);
+const liveView = D.run("getDashboardData('dk')");
+ok(liveView.role === 'live' && liveView.markets.map(x => x.id).join() === 'LIVE,XAUUSD', 'switcher lists the live strategy and gold (' + liveView.markets.map(x => x.label).join(', ') + ')');
+const before = D.calls.length;
+const g = D.run("getDashboardData('dk', 'XAUUSD')");
+ok(g.role === 'paper' && g.symbol === 'XAU/USD' && [g.price, g.upper, g.lower, g.ema, g.atr].every(Number.isFinite) && g.chart.close.length === 120,
+   'gold view: price, channel, EMA, ATR and a 120-bar chart');
+ok(!hasDate(g), 'gold view has no Date objects (google.script.run can\'t send them)');
+ok(!g.closed, 'gold shows open on a Monday');
+const tdCalls = since => D.calls.slice(since).filter(u => /twelvedata/.test(u));
+ok(tdCalls(before).length === 2, 'first view costs 2 Twelve Data requests (candles + price)');
+let mark = D.calls.length;
+for (let k = 1; k <= 4; k++) { D.setNow(monday + k * 60000); D.run("getDashboardData('dk', 'XAUUSD')"); }
+ok(tdCalls(mark).length === 0, 'refreshing every minute for 4 minutes costs no requests (cached)');
+mark = D.calls.length; D.setNow(monday + 6 * 60000); D.run("getDashboardData('dk', 'XAUUSD')");
+ok(tdCalls(mark).length === 1 && /\/price/.test(tdCalls(mark)[0]), 'after 5 minutes only the price is fetched again');
+mark = D.calls.length; D.setNow(monday + 4 * H); D.run("getDashboardData('dk', 'XAUUSD')");
+ok(tdCalls(mark).some(u => /time_series/.test(u)), 'a new 4h bar fetches fresh candles');
+let perDay = D.calls.length;
+for (let t = monday + 5 * H; t < monday + 29 * H; t += 60000) { D.setNow(t); D.run("getDashboardData('dk', 'XAUUSD')"); }
+perDay = D.calls.slice(perDay).filter(u => /twelvedata/.test(u)).length;
+ok(perDay <= 300, 'page left open for 24 hours, refreshing every minute: ' + perDay + ' Twelve Data requests (free plan: 800/day)');
+let sat = monday; while (new Date(sat).getUTCDay() !== 6) sat += H;
+D.setNow(sat + 12 * H);
+ok(D.run("getDashboardData('dk', 'XAUUSD')").closed === true, 'gold shows "market closed" on a Saturday');
+let threw = '';
+try { D.run("getDashboardData('dk', 'EURUSD')"); } catch (e) { threw = e.message; }
+ok(/Unknown or disabled market/.test(threw), 'a switched-off market is refused (EURUSD)');
+threw = '';
+try { D.run("getDashboardData('wrong', 'XAUUSD')"); } catch (e) { threw = e.message; }
+ok(threw === 'Locked', 'the wrong dashboard key is refused');
+
+/* ---------------------------------------------------------------- */
 section('Web app links');
 const L = world({ markets: MARKETS });
 const dev = 'https://script.google.com/macros/s/AKfycbxHgYce_x-1/dev';
@@ -178,9 +218,27 @@ const listed = E.run('CONFIG.CHALLENGER.markets.length');
 E.setNow(Date.UTC(2023, 0, 1) + 3.3 * 365 * 24 * H);
 E.run('challengerBacktest()');
 const bt = rowsOf(E, 'MM_Backtest');
-ok(bt.length === listed && bt.every(r => r[14] === 'not in the challenger yet'), 'one clean row per listed market (' + bt.map(r => r[1]).join(' ') + ')');
+const enabledIds = E.run('CONFIG.CHALLENGER.markets.filter(m => m.enabled).map(m => m.id)');
+ok(bt.length === listed && bt.every(r => r[14] === (enabledIds.indexOf(r[1]) !== -1 ? '' : 'not in the challenger yet')),
+   'one clean row per listed market, noted in / not in the challenger (' + bt.map(r => r[1]).join(' ') + ')');
 ok(bt.filter(r => r[1] === 'XAUUSD')[0][16] === 0.02 && bt.filter(r => r[1] === 'BTC')[0][16] === 0.15, 'each market is tested with its own costs (gold 0.02% per side, crypto 0.15%)');
 ok(bt.every(r => r[5] > 0), 'every market traded in the 3-year test');
+
+section('Walk-forward per market');
+const F = world({ markets: BT_MARKETS, props: KEYS });                    // default config: XAUUSD on
+F.setNow(E.now);
+const wfLines = F.run('challengerWalkForward()');
+const wfRow = rowsOf(F, 'MM_WalkForward').filter(r => r[1] === 'XAUUSD')[0];
+ok(!!wfRow && wfRow[3] >= 4 && ['HOLDS UP', 'FAILS ON NEW DATA', 'FRAGILE'].indexOf(wfRow[9]) !== -1,
+   'gold walk-forward: ' + (wfRow ? wfRow[3] + ' folds, verdict ' + wfRow[9] : 'no row'));
+ok(rowsOf(F, 'WF_XAUUSD').length >= wfRow[3], 'fold-by-fold detail written to WF_XAUUSD');
+const goldCosts = F.run("walkForward_(chHistory_(CONFIG.CHALLENGER.markets[0], 240, challengerParams_()), { sheet: 'tmp1', feePct: 0, slippagePct: 0.02 }).fixedReturnPct");
+const cryptoCosts = F.run("walkForward_(chHistory_(CONFIG.CHALLENGER.markets[0], 240, challengerParams_()), { sheet: 'tmp2' }).fixedReturnPct");
+ok(Math.abs(wfRow[5] - goldCosts) < 0.01 && goldCosts > cryptoCosts, 'gold is judged with its own spread costs, not crypto fees (' + goldCosts.toFixed(2) + '% vs ' + cryptoCosts.toFixed(2) + '%)');
+const F2 = world({ markets: BT_MARKETS });
+F2.setNow(E.now);
+ok(/XAUUSD: skipped, add TWELVEDATA_API_KEY/.test(F2.run('challengerWalkForward()').join('\n')), 'without a key the walk-forward says what is missing');
+
 const E2 = world({ markets: BT_MARKETS });
 E2.setNow(E.now);
 E2.run('challengerBacktest()');
@@ -201,6 +259,16 @@ if (ai !== -1) {
   ok(JSON.stringify(liveSignals(O)) === JSON.stringify(liveSignals(A)), 'live signals identical to ' + ref);
   ok(strip({ w: O, sheet: 'PaperTrades' }) === strip({ w: A, sheet: 'PaperTrades' }), 'live paper fills identical to ' + ref);
   ok(strip({ w: O, sheet: 'Equity' }) === strip({ w: A, sheet: 'Equity' }), 'live equity snapshots identical to ' + ref);
+  // The weekly backtest's walk-forward on BTC history must be unchanged by any refactor.
+  const wfOf = dir => {
+    const w = world({ markets: BT_MARKETS, dir: dir });
+    w.setNow(E.now);
+    w.run('CONFIG.BACKTEST.historyDays = 1095; buildHistory();');
+    const r = w.run('runWalkForward()');
+    return { r: JSON.stringify(r), sheet: JSON.stringify(w.sheets.BT_WalkForward.rows) };
+  };
+  const wNew = wfOf(undefined), wOld = wfOf(tmp);
+  ok(wNew.r === wOld.r && wNew.sheet === wOld.sheet, 'live walk-forward (BTC history) identical to ' + ref + ', every fold');
 }
 
 console.log('\n' + (failures ? failures + ' FAILED' : 'ALL PASSED'));

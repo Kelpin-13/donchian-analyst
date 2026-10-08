@@ -81,13 +81,17 @@ function fakeSheets() {
       clear: () => { rows.length = 0; },
       deleteRows: (from, n) => rows.splice(from - 1, n),
       setFrozenRows: () => {},
-      getRange: (r, c, n = 1, w = 1) => ({
-        getValue: () => (rows[r - 1] || [])[c - 1],
-        getValues: () => rows.slice(r - 1, r - 1 + n).map(x => { const a = (x || []).slice(c - 1, c - 1 + w); while (a.length < w) a.push(''); return a; }),
-        setValue: v => { cell(r, c)[c - 1] = v; },
-        setValues: vs => vs.forEach((v, j) => v.forEach((x, k) => { cell(r + j, c)[c - 1 + k] = x; })),
-        setFontWeight: function () { return this; }
-      })
+      getCharts: () => [], removeChart: () => {}, clearConditionalFormatRules: () => {},
+      getRange: (r, c, n = 1, w = 1) => {
+        const rng = {                                   // like Apps Script, setters return the range for chaining
+          getValue: () => (rows[r - 1] || [])[c - 1],
+          getValues: () => rows.slice(r - 1, r - 1 + n).map(x => { const a = (x || []).slice(c - 1, c - 1 + w); while (a.length < w) a.push(''); return a; }),
+          setValue: v => { cell(r, c)[c - 1] = v; return rng; },
+          setValues: vs => { vs.forEach((v, j) => v.forEach((x, k) => { cell(r + j, c)[c - 1 + k] = x; })); return rng; },
+          setFontWeight: () => rng, setBackground: () => rng, setNumberFormat: () => rng, setBorder: () => rng
+        };
+        return rng;
+      }
     };
   };
   return { sheets, ss: { getSheetByName: n => sheets[n] || null, insertSheet: n => (sheets[n] = mk()) } };
@@ -102,7 +106,7 @@ function world(opts) {
   const markets = o.markets;
   const { sheets, ss } = fakeSheets();
   const props = Object.assign({ ANTHROPIC_API_KEY: 'test' }, o.props || {});
-  const calls = [], callTimes = [];
+  const calls = [], callTimes = [], cacheStore = {};
   let now = 0;
 
   class FakeDate extends Date {
@@ -181,6 +185,10 @@ function world(opts) {
       deleteProperty: k => { delete props[k]; }
     }) },
     LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock: () => {} }) },
+    CacheService: { getScriptCache: () => ({                                   // honours expiry against fake time
+      get: k => (cacheStore[k] && cacheStore[k].exp > now ? cacheStore[k].v : null),
+      put: (k, v, sec) => { cacheStore[k] = { v: String(v), exp: now + (sec || 600) * 1000 }; }
+    }) },
     Utilities: { formatDate: d => new Date(d).toISOString(), sleep: () => {} },
     MailApp: { sendEmail: () => {} },
     UrlFetchApp: { fetch }

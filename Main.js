@@ -250,6 +250,7 @@ function onOpen() {
       .addItem('AI gate report (shadow)', 'showGateReport')
       .addItem('Challenger vs current', 'showChallengerReport')
       .addItem('Challenger: backtest each market (3 years)', 'challengerBacktest')
+      .addItem('Challenger: walk-forward test', 'challengerWalkForward')
       .addItem('Show dashboard URL', 'showDashboardUrl'))
     .addSubMenu(ui.createMenu('TradingView')
       .addItem('Send a test webhook', 'testTradingViewWebhook'))

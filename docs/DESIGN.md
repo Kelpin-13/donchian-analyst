@@ -159,7 +159,11 @@ failure the note falls back to the one-shot `writePreTradeNote_`.
   strategy alerts; this is off by default.)
 - Telegram: dedupe on `update_id` (Apps Script answers POSTs with a 302 and senders may
   retry), questions queued and answered from a one-off trigger.
-- **Panel** (`Dashboard.js`, `DashboardPage.html`): five tabs, read-only. Every endpoint calls
+- **Panel** (`Dashboard.js`, `DashboardPage.html`): five tabs, read-only. The Live tab has a market
+  switcher: the live strategy, or any enabled challenger market (e.g. gold) drawn the same way from
+  its paper book (`getDashboardData(k, marketId)`). Challenger candles are cached until the next bar
+  can close and the price for 5 minutes, so a panel left open all day stays near 300 Twelve Data
+  requests (free plan: 800/day). The choice is remembered per browser. Every endpoint calls
   `requireKey_()`; `google.script.run` can't return Dates, so all cells go through `cell_()`.
   State-changing actions stay in the sheet menu behind Google login.
 
@@ -269,6 +273,11 @@ its row in MM_Backtest has been reviewed — the rules were built and tested on 
 - No agent note, AI gate, alert or cross-check: paper and log only.
 - `challengerBacktest()` (menu) backtests every listed market, enabled or not, over 3 years into
   MM_Backtest, each with its own costs. It is how a market is vetted before it is switched on.
+- `challengerWalkForward()` (menu) runs the live strategy's walk-forward engine (`walkForward_`,
+  shared with `runWalkForward`) on each enabled market, with its own costs and as much history as
+  one provider call gives (Twelve Data: 5000 4h bars, ~6 folds of 1500 train / 500 test bars).
+  Pass rule = the weekly backtest's: current settings make money on unseen data and WFE ≥
+  `BACKTEST.minWfePct`. A market needs HOLDS UP here before it is considered for live.
 
 Switching live to multi-market is the owner's call, after the comparison and a review of
 MM_Backtest — and it would need multi-symbol state in the live monitor, journal and Pine charts.

@@ -111,7 +111,10 @@ const CONFIG = {
     // market. Gold and FX are spread-only on most brokers: these are typical OANDA-style spreads
     // (half the spread + a little slippage per side). Check them against your broker.
     markets: [
-      { id: 'XAUUSD', provider: 'twelvedata', symbol: 'XAU/USD', enabled: false, feePct: 0, slippagePct: 0.02 },
+      // MM_Backtest 9 Oct 2026 (Jan 2024 - Oct 2026, 4h, untuned rules), PF = profit factor:
+      //   XAUUSD PF 2.50, +71% (79 trades, 48% won, worst drop 6%), every year positive -> ON
+      //   EURUSD PF 0.96, GBPUSD 0.68, USDJPY 0.98, AUDUSD 0.78: no edge after spread -> off
+      { id: 'XAUUSD', provider: 'twelvedata', symbol: 'XAU/USD', enabled: true,  feePct: 0, slippagePct: 0.02 },
       { id: 'EURUSD', provider: 'twelvedata', symbol: 'EUR/USD', enabled: false, feePct: 0, slippagePct: 0.01 },
       { id: 'GBPUSD', provider: 'twelvedata', symbol: 'GBP/USD', enabled: false, feePct: 0, slippagePct: 0.015 },
       { id: 'USDJPY', provider: 'twelvedata', symbol: 'USD/JPY', enabled: false, feePct: 0, slippagePct: 0.01 },

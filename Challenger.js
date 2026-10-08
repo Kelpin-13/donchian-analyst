@@ -22,6 +22,7 @@
 const CH_TRADES_SHEET = 'MM_Trades';
 const CH_EQUITY_SHEET = 'MM_Equity';
 const CH_BACKTEST_SHEET = 'MM_Backtest';
+const CH_WF_SHEET = 'MM_WalkForward';
 
 function challengerParams_() {
   return Object.assign({}, CONFIG.STRATEGY, CONFIG.CHALLENGER.overrides || {});
@@ -304,6 +305,61 @@ function resetChallenger() {
   const props = PropertiesService.getScriptProperties();
   Object.keys(props.getProperties()).filter(k => k.indexOf('CH_') === 0).forEach(k => props.deleteProperty(k));
   logLine_('INFO', 'Challenger reset');
+}
+
+/* ---------------- walk-forward per market ---------------- */
+
+/**
+ * Menu: Live → Challenger: walk-forward test. Runs the same walk-forward engine
+ * as the live strategy (walkForward_) on every enabled challenger market, with
+ * that market's own costs. Folds go to WF_<ID>; one summary row per market per
+ * run goes to MM_WalkForward, with the same pass rule as the weekly backtest:
+ * the current settings must not lose money on unseen data, and walk-forward
+ * efficiency must reach BACKTEST.minWfePct.
+ */
+function challengerWalkForward() {
+  const C = CONFIG.CHALLENGER, B = CONFIG.BACKTEST, P = challengerParams_();
+  const headers = ['Run at', 'Market', 'Bars', 'Folds', 'Unseen trades', 'Unseen return, current settings %',
+                   'Unseen return, re-tuned each fold %', 'Buy & hold, same span %', 'Walk-forward efficiency %',
+                   'Verdict', 'Why'];
+  const sum = sheet_(CH_WF_SHEET, headers);
+  const markets = (C.markets || []).filter(m => m.enabled);
+  const lines = [];
+  if (!markets.length) lines.push('No challenger market is switched on.');
+
+  markets.forEach(m => {
+    if (!chHasKey_(m)) { lines.push(m.id + ': skipped, add ' + CH_PROVIDER_KEYS[m.provider]); return; }
+    try {
+      const candles = chHistory_(m, C.intervalMinutes, P);
+      const wf = walkForward_(candles, { sheet: 'WF_' + m.id, feePct: m.feePct, slippagePct: m.slippagePct });
+      const why = [];
+      if (wf.fixedReturnPct < 0) why.push('loses money on unseen data');
+      if (wf.wfePct === null || wf.wfePct < B.minWfePct) why.push('walk-forward efficiency ' + (wf.wfePct === null ? 'n/a' : Math.round(wf.wfePct) + '%') + ' is below ' + B.minWfePct + '% — likely curve-fit');
+      if (wf.folds < 4) why.push('only ' + wf.folds + ' folds — too few to trust');
+      const verdict = !why.length ? 'HOLDS UP' : (wf.fixedReturnPct < 0 || wf.wfePct === null || wf.wfePct < B.minWfePct ? 'FAILS ON NEW DATA' : 'FRAGILE');
+      const n = v => v === null || v === undefined || !isFinite(v) ? '' : round_(v);
+      sum.appendRow([new Date(), m.id, candles.length, wf.folds, wf.oosTrades, n(wf.fixedReturnPct), n(wf.oosReturnPct),
+                     n(wf.buyHoldPct), n(wf.wfePct), verdict, why.join('; ') || 'made money on every unseen stretch it was tested on, with no tuning advantage']);
+      lines.push(m.id + ': ' + verdict + ' — unseen-data return ' + n(wf.fixedReturnPct) + '% over ' + wf.folds +
+                 ' folds (' + wf.oosTrades + ' trades), WFE ' + n(wf.wfePct) + '%, buy & hold ' + n(wf.buyHoldPct) + '%');
+    } catch (e) {
+      lines.push(m.id + ': error — ' + e.message);
+    }
+  });
+
+  const msg = lines.join('\n') + '\n\nFold-by-fold detail: the WF_<market> sheets. Summary: ' + CH_WF_SHEET + '.';
+  Logger.log(msg);
+  try { SpreadsheetApp.getUi().alert('Challenger walk-forward', msg, SpreadsheetApp.getUi().ButtonSet.OK); } catch (e) {}
+  return lines;
+}
+
+/** As much closed history as one provider call gives (Twelve Data: 5000 bars), oldest first. */
+function chHistory_(m, iv, P) {
+  const size = iv * 60 * 1000;
+  let candles;
+  if (m.provider === 'twelvedata') candles = twelveCandles_(m.symbol, iv, 5000);
+  else candles = chCandles_(m, iv, 5000, P);
+  return candles.filter(k => k.t + size <= Date.now()).sort((a, b) => a.t - b.t);
 }
 
 /* ---------------- 3-year backtest per market ---------------- */

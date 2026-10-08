@@ -49,10 +49,14 @@ function lastRows_(name, n) {
   return s.getRange(s.getLastRow() - count + 1, 1, count, s.getLastColumn()).getValues();
 }
 
-/** Called from the page every refresh. Returns everything the screen shows. */
-function getDashboardData(k) {
+/**
+ * Called from the page every refresh. Returns everything the Live tab shows.
+ * `marketId` picks a challenger market (e.g. 'XAUUSD') instead of the live strategy.
+ */
+function getDashboardData(k, marketId) {
   const expected = secret_('DASHBOARD_KEY', false);
   if (!expected || !safeEqual_(k, expected)) throw new Error('Locked');
+  if (marketId && marketId !== 'LIVE') return marketDashboardData_(marketId);
 
   const candles = cachedCandles_();
   const series = computeSeries_(candles);
@@ -127,7 +131,90 @@ function getDashboardData(k) {
     cross: cross,
     lastError: errRow ? { time: Utilities.formatDate(new Date(errRow[0]), CONFIG.TZ, 'dd MMM HH:mm'),
                           msg: String(errRow[2]).slice(0, 160) } : null,
-    lastRun: Number(PropertiesService.getScriptProperties().getProperty('LAST_MONITOR_RUN') || 0)
+    lastRun: Number(PropertiesService.getScriptProperties().getProperty('LAST_MONITOR_RUN') || 0),
+    market: 'LIVE', role: 'live', closed: false, markets: dashboardMarkets_()
+  };
+}
+
+/** The market switcher: the live strategy first, then every enabled challenger market. */
+function dashboardMarkets_() {
+  const C = CONFIG.CHALLENGER;
+  return [{ id: 'LIVE', label: CONFIG.MARKET.symbol, role: 'live' }].concat(
+    (C && C.enabled ? C.markets || [] : []).filter(m => m.enabled).map(m => ({ id: m.id, label: m.symbol, role: 'paper' })));
+}
+
+/**
+ * Same shape as getDashboardData(), for one challenger market (paper only).
+ * Twelve Data's free plan allows 800 requests a day and the page refreshes every
+ * minute, so candles are cached until the next bar can have closed and the price
+ * for 5 minutes. That keeps the panel to ~300 requests a day even left open.
+ */
+function marketDashboardData_(id) {
+  const C = CONFIG.CHALLENGER;
+  const m = (C && C.enabled ? C.markets || [] : []).filter(x => x.id === id && x.enabled)[0];
+  if (!m) throw new Error('Unknown or disabled market: ' + id);
+  if (!chHasKey_(m)) throw new Error(id + ' needs ' + CH_PROVIDER_KEYS[m.provider] + ' in Script Properties');
+
+  const P = challengerParams_();
+  const ivMs = C.intervalMinutes * 60 * 1000;
+  const cache = CacheService.getScriptCache();
+  const ckey = 'dash_mk_' + m.id + '_' + C.intervalMinutes;
+  let candles = null;
+  try { const hit = cache.get(ckey); if (hit) candles = JSON.parse(hit); } catch (e) {}
+  if (!candles || Date.now() >= candles[candles.length - 1].t + 2 * ivMs) {
+    candles = chCandles_(m, C.intervalMinutes, Math.min(C.candlesToFetch, 260), P);
+    const ttl = Math.round((candles[candles.length - 1].t + 2 * ivMs - Date.now()) / 1000) + 60;
+    try { cache.put(ckey, JSON.stringify(candles), Math.max(60, Math.min(21600, ttl))); } catch (e) { /* too big: fine */ }
+  }
+  const series = computeSeries_(candles, P);
+  const i = candles.length - 1, last = candles[i];
+
+  let price = last.c, priceSource = 'last close';
+  const pkey = 'dash_px_' + m.id;
+  try {
+    const hit = cache.get(pkey);
+    if (hit) { price = Number(hit); priceSource = 'live'; }
+    else { price = chPrice_(m); priceSource = 'live'; cache.put(pkey, String(price), 300); }
+  } catch (e) { price = last.c; priceSource = 'last close'; }
+
+  const st = chGet_('CH_STATE_' + m.id) || freshState_();
+  const book = paperStatus_(price, chBook_(m));
+  const from = Math.max(0, candles.length - 120);
+  const chart = { labels: [], close: [], upper: [], lower: [], ema: [] };
+  for (let j = from; j < candles.length; j++) {
+    chart.labels.push(Utilities.formatDate(new Date(candles[j].t), CONFIG.TZ, 'dd MMM HH:mm'));
+    chart.close.push(round_(candles[j].c));
+    chart.upper.push(round_(series.entry.upper[j]));
+    chart.lower.push(round_(series.exit.lower[j]));
+    chart.ema.push(round_(series.ema[j]));
+  }
+  const fills = lastRows_(CH_TRADES_SHEET, 300).filter(r => r[0] === m.id).slice(-8).reverse().map(r => ({
+    time: r[4] ? Utilities.formatDate(new Date(r[4]), CONFIG.TZ, 'dd MMM HH:mm') : '',
+    type: String(r[3]), price: round_(Number(r[5])), setup: '', confidence: '', verdict: '', lesson: ''
+  }));
+  const errRow = lastRows_(CONFIG.SHEETS.log, 50).reverse().find(r => r[1] === 'ERROR');
+
+  return {
+    symbol: m.symbol, provider: m.provider, interval: C.intervalMinutes, serverNow: Date.now(),
+    price: round_(price), priceSource: priceSource, lastBarTime: last.t, nextCloseAt: last.t + 2 * ivMs,
+    // Gold & FX close at the weekend: no new bar for longer than one interval means closed.
+    closed: Date.now() > last.t + 2 * ivMs + 20 * 60 * 1000,
+    upper: round_(series.entry.upper[i]), lower: round_(series.exit.lower[i]), ema: round_(series.ema[i]),
+    atr: round_(series.atr[i]),
+    breakoutLookback: P.breakoutLookback, exitLookback: P.exitLookback, emaPeriod: P.trendEmaPeriod,
+    position: st.position, entry: round_(st.entryPrice), stop: round_(st.stop), barsInTrade: st.barsInTrade,
+    maxBars: P.maxBarsInTrade,
+    paper: {
+      equity: round_(book.equity), start: book.startingEquity, returnPct: round_(book.returnPct),
+      cash: round_(book.cash), openPnl: round_(book.openPnl), fees: round_(book.feesPaid),
+      trades: book.trades, winRate: book.winRate === null ? null : round_(book.winRate),
+      drawdownPct: round_(book.drawdownPct), enabled: CONFIG.PAPER.enabled
+    },
+    chart: chart, equity: [], signals: fills, brief: null, cross: null,
+    lastError: errRow ? { time: Utilities.formatDate(new Date(errRow[0]), CONFIG.TZ, 'dd MMM HH:mm'),
+                          msg: String(errRow[2]).slice(0, 160) } : null,
+    lastRun: Number(PropertiesService.getScriptProperties().getProperty('LAST_MONITOR_RUN') || 0),
+    market: m.id, role: 'paper', markets: dashboardMarkets_()
   };
 }
 

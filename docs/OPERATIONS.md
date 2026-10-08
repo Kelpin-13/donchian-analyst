@@ -32,6 +32,8 @@ Sheets marked *overwritten* are replaced on every run; everything else is append
 | Trace | agent loop | every tool call |
 | Gate | monitor (AI gate, shadow) | one row per verdict; `FinalR` filled when the trade closes (`GATE_HEADERS`) |
 | MM_Trades, MM_Equity | `runChallenger` | challenger fills and per-bar equity for every market: a leading **Market** column, then the PaperTrades / Equity columns |
+| MM_WalkForward | `challengerWalkForward` | one row per enabled market per run: folds, unseen-data return, WFE, verdict (HOLDS UP / FRAGILE / FAILS ON NEW DATA) |
+| WF_<ID> (e.g. WF_XAUUSD) | `challengerWalkForward` | *overwritten*: that market's folds, same layout as BT_WalkForward |
 | MM_Backtest | `challengerBacktest` | one row per market per run: 3-year return, trades, PF, drawdown, year by year, avg R, cost per side |
 | Ch_Trades, Ch_Equity | — | left over from the first (1h BTC) challenger; no longer written, safe to delete |
 | Crosscheck | webhook + monitor | status PENDING / MATCH / TV_ONLY / APPS_SCRIPT_ONLY |
@@ -77,7 +79,7 @@ Check installation · Test data feed · Test live price · Dump indicators ·
 **Backtesting**: build/import/update history, quick, detailed, sweep, walk-forward, Monte
 Carlo, TV compare, live decay, full automatic run ·
 **Lab**: add starters, run now, ask Claude, promote (holdout), show live, revert ·
-**Live**: check now, daily brief, grade, ask the agent, paper account, AI gate report, challenger vs current, challenger: backtest each market, dashboard URL ·
+**Live**: check now, daily brief, grade, ask the agent, paper account, AI gate report, challenger vs current, challenger: backtest each market, challenger: walk-forward test, dashboard URL ·
 **TradingView**: test webhook · Show scorecard · **Reset**: position state, paper account, challenger.
 
 `checkInstall()` / `installChecks_(skipApi)` detect stale files by looking for a function
@@ -89,6 +91,9 @@ version-defining function, add a check there.
 - Code reaches Apps Script via `clasp push` from this folder (master copy).
 - Triggers and menu run the latest **saved/pushed** code immediately.
 - Panel for daily use: the `/dev` test-deployment URL + `?k=DASHBOARD_KEY` (owner login only).
+- Twelve Data budget (free: 800 requests/day, 8/minute): challenger ~6/day per market, the panel's
+  gold view up to ~300/day if left open, `challengerBacktest` 1 per market. Watch the Log for
+  `Twelve Data 429` if more markets are switched on.
 - Links come from the `DASHBOARD_URL` / `WEBHOOK_URL` Script Properties, not
   `ScriptApp.getService().getUrl()` — that returned a deployment ID that no longer existed
   ("Sorry, unable to open the file at present").
