@@ -33,6 +33,15 @@ function chBook_(m) {
            feePct: m.feePct, slippagePct: m.slippagePct };
 }
 
+/** Backtest/walk-forward options carrying this market's own costs and swap. */
+function chCostOpts_(m) {
+  const o = {};
+  ['feePct', 'slippagePct', 'swapLongPctYear', 'swapDays', 'rolloverHourUtc']
+    .forEach(key => { if (m[key] !== undefined) o[key] = m[key]; });
+  o.barMs = CONFIG.CHALLENGER.intervalMinutes * 60000;
+  return o;
+}
+
 /** Script Property each provider needs, if any. */
 const CH_PROVIDER_KEYS = { oanda: 'OANDA_API_KEY', twelvedata: 'TWELVEDATA_API_KEY' };
 function chHasKey_(m) { return !CH_PROVIDER_KEYS[m.provider] || !!secret_(CH_PROVIDER_KEYS[m.provider], false); }
@@ -210,6 +219,10 @@ function chRunMarket_(m, P) {
   chStart_(m, last.c);
 
   const series = computeSeries_(candles, P);
+  // Held through this bar? Then pay its overnight swap first (same rule as the backtest).
+  const held = getPaper_(chBook_(m)).units;
+  const sw = swapForBar_(last, held, Object.assign(btDefaults_(), chCostOpts_(m)));
+  if (sw) paperChargeSwap_(chBook_(m), sw);
   if (state.position === 'LONG') state.barsInTrade++;
   const sig = decideAtBar_(candles, series, i, state, P);
   if (sig) applySignal_(state, sig);
@@ -331,15 +344,18 @@ function challengerWalkForward() {
     if (!chHasKey_(m)) { lines.push(m.id + ': skipped, add ' + CH_PROVIDER_KEYS[m.provider]); return; }
     try {
       const candles = chHistory_(m, C.intervalMinutes, P);
-      const wf = walkForward_(candles, { sheet: 'WF_' + m.id, feePct: m.feePct, slippagePct: m.slippagePct });
+      const wf = walkForward_(candles, Object.assign({ sheet: 'WF_' + m.id }, chCostOpts_(m)));
       const why = [];
       if (wf.fixedReturnPct < 0) why.push('loses money on unseen data');
       if (wf.wfePct === null || wf.wfePct < B.minWfePct) why.push('walk-forward efficiency ' + (wf.wfePct === null ? 'n/a' : Math.round(wf.wfePct) + '%') + ' is below ' + B.minWfePct + '% — likely curve-fit');
       if (wf.folds < 4) why.push('only ' + wf.folds + ' folds — too few to trust');
       const verdict = !why.length ? 'HOLDS UP' : (wf.fixedReturnPct < 0 || wf.wfePct === null || wf.wfePct < B.minWfePct ? 'FAILS ON NEW DATA' : 'FRAGILE');
       const n = v => v === null || v === undefined || !isFinite(v) ? '' : round_(v);
+      const up = (wf.fixedFoldReturns || []).filter(x => x > 0).length;
+      const tuning = wf.fixedReturnPct >= wf.oosReturnPct ? 're-tuning did not help (keep the settings as they are)' : 're-tuning helped a little';
       sum.appendRow([new Date(), m.id, candles.length, wf.folds, wf.oosTrades, n(wf.fixedReturnPct), n(wf.oosReturnPct),
-                     n(wf.buyHoldPct), n(wf.wfePct), verdict, why.join('; ') || 'made money on every unseen stretch it was tested on, with no tuning advantage']);
+                     n(wf.buyHoldPct), n(wf.wfePct), verdict, why.join('; ') ||
+                     ('made money on unseen data overall; ' + up + ' of ' + wf.folds + ' unseen stretches positive; ' + tuning)]);
       lines.push(m.id + ': ' + verdict + ' — unseen-data return ' + n(wf.fixedReturnPct) + '% over ' + wf.folds +
                  ' folds (' + wf.oosTrades + ' trades), WFE ' + n(wf.wfePct) + '%, buy & hold ' + n(wf.buyHoldPct) + '%');
     } catch (e) {
@@ -375,7 +391,7 @@ function challengerBacktest() {
   const t0 = Date.now(), iv = C.intervalMinutes, size = iv * 60 * 1000;
   const headers = ['Run at', 'Market', 'From (UTC)', 'To (UTC)', 'Bars', 'Trades', 'Return %', 'Buy & hold %',
                    'Profit factor', 'Max DD %', 'Win rate %', 'Year 1 %', 'Year 2 %', 'Year 3 %', 'Note',
-                   'Avg R', 'Cost % per side'];
+                   'Avg R', 'Cost % per side', 'Swap long %/yr', 'Swap paid $'];
   const s = sheet_(CH_BACKTEST_SHEET, headers);
   const today = Utilities.formatDate(new Date(), CONFIG.TZ, 'yyyy-MM-dd');
   const doneToday = s.getLastRow() > 1 ? s.getRange(2, 1, s.getLastRow() - 1, 2).getValues()
@@ -416,11 +432,8 @@ function challengerBacktest() {
       const idx = t => { const j = candles.findIndex(k => k.t >= t); return j === -1 ? candles.length : j; };
       const run = (a, b) => {
         const si = Math.min(idx(a), candles.length - 1), ei = Math.max(si, Math.min(candles.length - 1, idx(b) - 1));
-        const costs = {};
-        if (m.feePct !== undefined) costs.feePct = m.feePct;
-        if (m.slippagePct !== undefined) costs.slippagePct = m.slippagePct;
-        const r = simulate_(candles, P, Object.assign({ startIndex: si, endIndex: ei, series: series }, costs));
-        return { m: metrics_(r, candles), bh: (candles[ei].c / candles[si].o - 1) * 100 };
+        const r = simulate_(candles, P, Object.assign({ startIndex: si, endIndex: ei, series: series }, chCostOpts_(m)));
+        return { m: metrics_(r, candles), bh: (candles[ei].c / candles[si].o - 1) * 100, swap: r.totalSwap };
       };
       const all = run(testFrom, endMs + 1);
       const ys = [0, 1, 2].map(y => run(testFrom + y * yearMs, testFrom + (y + 1) * yearMs).m.totalReturnPct);
@@ -432,7 +445,8 @@ function challengerBacktest() {
                    (m.enabled ? '' : 'not in the challenger yet'),
                    n(all.m.avgR),
                    round_((m.feePct !== undefined ? m.feePct : CONFIG.BACKTEST.feePct) +
-                          (m.slippagePct !== undefined ? m.slippagePct : CONFIG.BACKTEST.slippagePct))]);
+                          (m.slippagePct !== undefined ? m.slippagePct : CONFIG.BACKTEST.slippagePct)),
+                   m.swapLongPctYear || 0, n(all.swap)]);
     } catch (e) {
       s.appendRow([new Date(), m.id, '', '', '', '', '', '', '', '', '', '', '', '', 'error: ' + e.message]);
     }

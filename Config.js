@@ -114,7 +114,10 @@ const CONFIG = {
       // MM_Backtest 9 Oct 2026 (Jan 2024 - Oct 2026, 4h, untuned rules), PF = profit factor:
       //   XAUUSD PF 2.50, +71% (79 trades, 48% won, worst drop 6%), every year positive -> ON
       //   EURUSD PF 0.96, GBPUSD 0.68, USDJPY 0.98, AUDUSD 0.78: no edge after spread -> off
-      { id: 'XAUUSD', provider: 'twelvedata', symbol: 'XAU/USD', enabled: true,  feePct: 0, slippagePct: 0.02 },
+      // Gold swap from OANDA MT5 XAUUSD.sml specification (Oct 2026): percentage of current price,
+      // long -5.92%/yr, charged once per weeknight (Mon-Fri = 1, no triple day).
+      { id: 'XAUUSD', provider: 'twelvedata', symbol: 'XAU/USD', enabled: true,  feePct: 0, slippagePct: 0.02,
+        swapLongPctYear: -5.92, swapDays: [1, 2, 3, 4, 5] },
       { id: 'EURUSD', provider: 'twelvedata', symbol: 'EUR/USD', enabled: false, feePct: 0, slippagePct: 0.01 },
       { id: 'GBPUSD', provider: 'twelvedata', symbol: 'GBP/USD', enabled: false, feePct: 0, slippagePct: 0.015 },
       { id: 'USDJPY', provider: 'twelvedata', symbol: 'USD/JPY', enabled: false, feePct: 0, slippagePct: 0.01 },

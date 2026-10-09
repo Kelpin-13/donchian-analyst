@@ -116,7 +116,7 @@ function paperOnSignal_(sig, book, riskPct, livePrice) {
   const fill = live * (1 - slip);
   const proceeds = acct.units * fill;
   const feeAmt = proceeds * fee;
-  const pnl = (proceeds - feeAmt) - (acct.entryCost + acct.entryFee);
+  const pnl = (proceeds - feeAmt) - (acct.entryCost + acct.entryFee) + (acct.entrySwap || 0);
 
   acct.cash += proceeds - feeAmt;
   acct.feesPaid += feeAmt;
@@ -131,9 +131,24 @@ function paperOnSignal_(sig, book, riskPct, livePrice) {
 
   acct.units = 0; acct.entryFill = null; acct.entryTime = null;
   acct.entryCost = 0; acct.entryFee = 0; acct.equityAtEntry = null;
+  if (acct.entrySwap) acct.entrySwap = 0;
   if (acct.cash > acct.peakEquity) acct.peakEquity = acct.cash;
   setPaper_(acct, book);
   return { side: 'SELL', fill: fill, pnl: pnl };
+}
+
+/**
+ * Overnight swap on an open position (challenger books on CFDs). `amount` < 0 is
+ * paid. It moves cash now and counts toward the trade's P&L when it closes.
+ */
+function paperChargeSwap_(book, amount) {
+  if (!amount) return;
+  const acct = getPaper_(book);
+  if (acct.units <= 0) return;
+  acct.cash += amount;
+  acct.swapPaid = (acct.swapPaid || 0) + amount;
+  acct.entrySwap = (acct.entrySwap || 0) + amount;
+  setPaper_(acct, book);
 }
 
 /** One equity row per closed bar. Called at the end of each runMonitor bar. */
@@ -173,6 +188,7 @@ function paperStatus_(livePrice, book) {
     openPnl: a.units > 0 ? posVal - a.entryCost - a.entryFee : 0,
     entryFill: a.entryFill,
     feesPaid: a.feesPaid,
+    swapPaid: a.swapPaid || 0,
     realizedPnl: a.realizedPnl,
     trades: a.trades,
     winRate: a.trades ? a.wins / a.trades * 100 : null,

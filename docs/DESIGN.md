@@ -252,7 +252,12 @@ its row in MM_Backtest has been reviewed — the rules were built and tested on 
   same way the backtest combined them. Fills use the market's own price.
 - Per-market costs (`feePct`, `slippagePct`) replace PAPER/BACKTEST costs. Gold and FX are
   spread-only on most brokers (0.01–0.02% per side assumed); crypto keeps 0.10% fee + 0.05% slip.
-  Overnight swap/financing on CFDs is **not** modelled.
+- Overnight swap (CFDs): per market `swapLongPctYear` (+ `swapDays`, `rolloverHourUtc`). MT5
+  "percentage, current price" swap: units × price × rate ÷ 360, charged on the bar containing the
+  rollover (21:00 UTC ≈ broker server midnight) on each listed weekday. Gold: −5.92%/yr, Mon–Fri
+  once each, from the OANDA MT5 `XAUUSD.sml` specification. `swapForBar_()` is the one rule; the
+  backtest (`simulate_`, off by default, so BTC is unchanged), walk-forward and the paper book
+  (`paperChargeSwap_`) all use it, and it is part of each trade's P&L and R.
 - Exposure stays capped at 100% of the book (no leverage). On FX a 2×ATR stop is often < 1% of
   price, so the 1% risk budget would need > 100% exposure and is capped: FX trades risk less
   than 1% and returns look small. Judge FX on profit factor, win rate and avg R, not % return.

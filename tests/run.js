@@ -232,9 +232,37 @@ const wfRow = rowsOf(F, 'MM_WalkForward').filter(r => r[1] === 'XAUUSD')[0];
 ok(!!wfRow && wfRow[3] >= 4 && ['HOLDS UP', 'FAILS ON NEW DATA', 'FRAGILE'].indexOf(wfRow[9]) !== -1,
    'gold walk-forward: ' + (wfRow ? wfRow[3] + ' folds, verdict ' + wfRow[9] : 'no row'));
 ok(rowsOf(F, 'WF_XAUUSD').length >= wfRow[3], 'fold-by-fold detail written to WF_XAUUSD');
-const goldCosts = F.run("walkForward_(chHistory_(CONFIG.CHALLENGER.markets[0], 240, challengerParams_()), { sheet: 'tmp1', feePct: 0, slippagePct: 0.02 }).fixedReturnPct");
+const ups = F.run("walkForward_(chHistory_(CONFIG.CHALLENGER.markets[0], 240, challengerParams_()), { sheet: 'tmp0', feePct: 0, slippagePct: 0.02 }).fixedFoldReturns").filter(x => x > 0).length;
+ok(wfRow[9] !== 'HOLDS UP' || new RegExp(ups + ' of ' + wfRow[3] + ' unseen stretches positive').test(wfRow[10]), 'the summary states how many unseen stretches were positive (' + ups + ' of ' + wfRow[3] + ')');
+const goldCosts = F.run("walkForward_(chHistory_(CONFIG.CHALLENGER.markets[0], 240, challengerParams_()), Object.assign({ sheet: 'tmp1' }, chCostOpts_(CONFIG.CHALLENGER.markets[0]))).fixedReturnPct");
 const cryptoCosts = F.run("walkForward_(chHistory_(CONFIG.CHALLENGER.markets[0], 240, challengerParams_()), { sheet: 'tmp2' }).fixedReturnPct");
-ok(Math.abs(wfRow[5] - goldCosts) < 0.01 && goldCosts > cryptoCosts, 'gold is judged with its own spread costs, not crypto fees (' + goldCosts.toFixed(2) + '% vs ' + cryptoCosts.toFixed(2) + '%)');
+ok(Math.abs(wfRow[5] - goldCosts) < 0.01 && goldCosts > cryptoCosts, 'gold is judged with its own costs and swap, not crypto fees (' + goldCosts.toFixed(2) + '% vs ' + cryptoCosts.toFixed(2) + '%)');
+
+section('Overnight swap');
+// Run the engine on gold with and without swap, then recount every charge by hand.
+F.run(`var __g = chHistory_(CONFIG.CHALLENGER.markets[0], 240, challengerParams_());
+       var __P = challengerParams_();
+       var __with = simulate_(__g, __P, chCostOpts_(CONFIG.CHALLENGER.markets[0]));
+       var __none = simulate_(__g, __P, Object.assign(chCostOpts_(CONFIG.CHALLENGER.markets[0]), { swapLongPctYear: 0 }));`);
+const sw = F.run('__with'), none = F.run('__none'), goldBarsAll = F.run('__g');
+ok(sw.trades.length === none.trades.length && sw.trades.length > 0 && sw.totalSwap < 0, 'gold pays swap on longs (' + sw.trades.length + ' trades, $' + sw.totalSwap.toFixed(2) + ' total)');
+// Expected: for every bar a trade was held through (filled at its open, exit at a later open),
+// if the bar holds 21:00 UTC on Mon-Fri, charge units x close x -5.92% / 360.
+let expected = 0, chargedOk = true;
+sw.trades.forEach(tr => {
+  goldBarsAll.forEach(k => {
+    if (k.t < tr.entryTime || k.t >= tr.exitTime) return;
+    const d = new Date(k.t), rollInBar = d.getUTCHours() === 20, wd = d.getUTCDay();
+    if (rollInBar && wd >= 1 && wd <= 5) expected += tr.units * k.c * -5.92 / 100 / 360;
+  });
+});
+const closedSwap = sw.trades.reduce((a, t) => a + t.swap, 0);
+ok(Math.abs(closedSwap - expected) < 1e-6, 'every charge recounted by hand: once per held weeknight at 21:00 UTC, none at weekends ($' + expected.toFixed(4) + ')');
+ok(sw.trades.every(t => Math.abs(t.units * (t.exitPrice - t.entryPrice) - t.fees + t.swap - t.pnl) < 1e-6) && sw.trades.some(t => t.swap < 0),
+   "each trade's P&L = units x (exit - entry) - fees + its own swap");
+ok(F.run('simulate_(__g, __P, Object.assign(chCostOpts_(CONFIG.CHALLENGER.markets[0]), { swapDays: [] })).totalSwap') === 0, 'no charged days → no swap');
+const bookGold = JSON.parse(B.props.CH_PAPER_XAUUSD), bookEth = JSON.parse(B.props.CH_PAPER_ETH);
+ok(bookGold.swapPaid < 0 && !bookEth.swapPaid, 'paper: the gold book paid swap ($' + bookGold.swapPaid.toFixed(2) + '), crypto books paid none');
 const F2 = world({ markets: BT_MARKETS });
 F2.setNow(E.now);
 ok(/XAUUSD: skipped, add TWELVEDATA_API_KEY/.test(F2.run('challengerWalkForward()').join('\n')), 'without a key the walk-forward says what is missing');
@@ -265,6 +293,7 @@ if (ai !== -1) {
     w.setNow(E.now);
     w.run('CONFIG.BACKTEST.historyDays = 1095; buildHistory();');
     const r = w.run('runWalkForward()');
+    delete r.fixedFoldReturns;                                // new field; everything else must match
     return { r: JSON.stringify(r), sheet: JSON.stringify(w.sheets.BT_WalkForward.rows) };
   };
   const wNew = wfOf(undefined), wOld = wfOf(tmp);

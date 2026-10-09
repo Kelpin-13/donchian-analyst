@@ -34,8 +34,27 @@ function btDefaults_() {
     startIndex: 0,
     endIndex: undefined,
     closeAtEnd: false,     // force-close an open trade on the last bar
-    series: null           // pass precomputed indicators to save time
+    series: null,          // pass precomputed indicators to save time
+    // Overnight financing on CFDs (MT5 "percentage, current price" swap). 0 = none (crypto spot).
+    swapLongPctYear: 0,    // e.g. -5.92: holding a long costs 5.92%/year of its value
+    swapDays: [1, 2, 3, 4, 5],   // UTC weekdays of the rollover that charge once each (MT5 "Swap rates")
+    rolloverHourUtc: 21,   // broker server midnight in UTC; the bar containing it pays the swap
+    barMs: null            // bar length; defaults to CONFIG.MARKET.intervalMinutes
   };
+}
+
+/**
+ * Swap for holding `units` through the rollover inside bar k, or 0 if this bar
+ * has no charged rollover. Negative rate = cost. MT5 percentage swap: value x rate / 360.
+ */
+function swapForBar_(k, units, O) {
+  if (!O.swapLongPctYear || units <= 0) return 0;
+  const day = 86400000, barMs = O.barMs || CONFIG.MARKET.intervalMinutes * 60000;
+  const roll = Math.floor(k.t / day) * day + O.rolloverHourUtc * 3600000;
+  const inBar = (roll >= k.t && roll < k.t + barMs) || (roll + day >= k.t && roll + day < k.t + barMs);
+  const at = roll >= k.t ? roll : roll + day;
+  if (!inBar || O.swapDays.indexOf(new Date(at).getUTCDay()) === -1) return 0;
+  return units * k.c * O.swapLongPctYear / 100 / 360;
 }
 
 function freshState_() {
@@ -63,6 +82,7 @@ function simulate_(candles, params, opts) {
   let pending = null;
   let open = null;
   let totalFees = 0;
+  let totalSwap = 0;       // negative = paid
   let barsInMarket = 0;
 
   const trades = [];
@@ -94,7 +114,7 @@ function simulate_(candles, params, opts) {
       const f = proceeds * fee;
       cash += proceeds - f;
       totalFees += f;
-      const pnl = (proceeds - f) - (open.cost + open.entryFee);
+      const pnl = (proceeds - f) - (open.cost + open.entryFee) + (open.swap || 0);
       trades.push({
         entrySignalTime: open.entrySignalTime,
         entryTime: open.entryTime,
@@ -110,6 +130,7 @@ function simulate_(candles, params, opts) {
         bars: i - open.entryBar,
         exitType: sig.type,
         fees: open.entryFee + f,
+        swap: open.swap || 0,
         equityBefore: open.equityBefore
       });
       units = 0;
@@ -122,6 +143,10 @@ function simulate_(candles, params, opts) {
 
     // 1. Orders decided on the previous bar fill at this bar's open.
     if (pending) { fill(pending, k.o, k.t, i); pending = null; }
+
+    // 1b. Held through this bar's rollover: pay (or earn) the overnight swap.
+    const sw = swapForBar_(k, units, O);
+    if (sw) { cash += sw; totalSwap += sw; open.swap = (open.swap || 0) + sw; }
 
     // 2. Decide on this bar's close — the exact function the live bot uses.
     if (state.position === 'LONG') state.barsInTrade++;
@@ -158,6 +183,7 @@ function simulate_(candles, params, opts) {
     startingEquity: O.startingEquity,
     endEquity: equity[equity.length - 1],
     totalFees: totalFees,
+    totalSwap: totalSwap,
     barsInMarket: barsInMarket,
     openAtEnd: units > 0,
     pendingAtEnd: !!pending
@@ -516,8 +542,8 @@ function runWalkForward() {
 function walkForward_(candles, opts) {
   const o = opts || {};
   const costs = {};
-  if (o.feePct !== undefined) costs.feePct = o.feePct;
-  if (o.slippagePct !== undefined) costs.slippagePct = o.slippagePct;
+  ['feePct', 'slippagePct', 'swapLongPctYear', 'swapDays', 'rolloverHourUtc', 'barMs']
+    .forEach(key => { if (o[key] !== undefined) costs[key] = o[key]; });
   const B = CONFIG.BACKTEST;
   const base = CONFIG.STRATEGY;
   const T = B.wfTrainBars, S = B.wfTestBars;
@@ -627,7 +653,8 @@ function walkForward_(candles, opts) {
     fixedReturnPct: (fixedEq / B.startingEquityUSD - 1) * 100,
     buyHoldPct: bhAll,
     wfePct: wfe,
-    oosTrades: oosTrades.length
+    oosTrades: oosTrades.length,
+    fixedFoldReturns: folds.map(f => f.fixedRet)     // current settings, each unseen stretch
   };
 }
 

@@ -34,7 +34,7 @@ Sheets marked *overwritten* are replaced on every run; everything else is append
 | MM_Trades, MM_Equity | `runChallenger` | challenger fills and per-bar equity for every market: a leading **Market** column, then the PaperTrades / Equity columns |
 | MM_WalkForward | `challengerWalkForward` | one row per enabled market per run: folds, unseen-data return, WFE, verdict (HOLDS UP / FRAGILE / FAILS ON NEW DATA) |
 | WF_<ID> (e.g. WF_XAUUSD) | `challengerWalkForward` | *overwritten*: that market's folds, same layout as BT_WalkForward |
-| MM_Backtest | `challengerBacktest` | one row per market per run: 3-year return, trades, PF, drawdown, year by year, avg R, cost per side |
+| MM_Backtest | `challengerBacktest` | one row per market per run: 3-year return, trades, PF, drawdown, year by year, avg R, cost per side, swap rate and swap paid |
 | Ch_Trades, Ch_Equity | — | left over from the first (1h BTC) challenger; no longer written, safe to delete |
 | Crosscheck | webhook + monitor | status PENDING / MATCH / TV_ONLY / APPS_SCRIPT_ONLY |
 | History | `buildHistory`, `updateHistory`, `importTradingViewCsv` | `t_ms, time_utc, open, high, low, close, volume` |
