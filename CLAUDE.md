@@ -51,7 +51,8 @@ system in Google Apps Script, with a Claude-powered analyst. Focus: gold (XAUUSD
 | `Main.js` | Triggers (`setup`), monitor loop, menu, `checkInstall` |
 | `donchian_analyst.pine` | Same strategy in Pine v6 for TradingView — not uploaded to Apps Script |
 | `mt5/DonchianGold.mq5` | MT5 Expert Advisor: gold H4, long + short, **demo only**. Mirrors `research/daytrade.js` (H4 hold-overnight, both). Compile with MetaEditor; install under `MQL5/Experts/DonchianAnalyst/` |
-| `research/` | Node research on the broker's MT5 exports in `data/` (git-ignored): `daytrade.js` (day-trading vs H4 study), `parity_mt5.js` (EA vs research, trade by trade) |
+| `mt5/GoldIntraday.mq5` | MT5 Expert Advisor: six intraday gold strategies on M15, flat by 23:00, 0.25% risk each, **demo only**, magic 20261013 + 1..6. Mirrors the portfolio in `research/intraday.js` |
+| `research/` | Node research on the broker's MT5 exports in `data/` (git-ignored): `daytrade.js` (day-trading vs H4 study), `intraday.js` (intraday strategy study + the EA's portfolio), `parity_mt5.js` / `parity_intraday.js` (each EA vs its research, trade by trade) |
 
 ## Rules that must not be broken
 
@@ -73,7 +74,8 @@ system in Google Apps Script, with a Claude-powered analyst. Focus: gold (XAUUSD
    `donchian_analyst.pine`, or the TradingView cross-check will flag disagreements. Say so.
    **EA parity:** `mt5/DonchianGold.mq5` and `research/daytrade.js` are the same gold rules in two
    languages. Change both together, then re-run the Strategy Tester and `node research/parity_mt5.js`
-   (must report PASS) before the EA trades again.
+   (must report PASS) before the EA trades again. The same holds for `mt5/GoldIntraday.mq5` and the
+   portfolio in `research/intraday.js`, checked with `node research/parity_intraday.js`.
 7. **The lab never promotes by itself.** Promotion needs the holdout test and the owner's yes.
    Don't loosen lab thresholds to make an experiment pass.
 8. **The agent's tools stay read-only.** The tool list is the security boundary.

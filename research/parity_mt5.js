@@ -36,10 +36,16 @@ console.log('EA journal: ' + file);
 const parseT = s => Date.parse(s.trim().replace(/\./g, '-').replace(' ', 'T') + 'Z');
 const H4 = 4 * 3600000;
 const barOf = t => Math.floor(t / H4) * H4;      // an order retried after the daily break still belongs to its bar
-const rows = fs.readFileSync(file, 'latin1').trim().split(/\r?\n/).slice(1).map(l => {
+const allRows = fs.readFileSync(file, 'latin1').trim().split(/\r?\n/).slice(1).map(l => {
   const [t, ev, eq, ...rest] = l.split(',');
   return { t: parseT(t), ev: ev.trim(), eq: +eq, detail: rest.join(',') };
 });
+// The tester appends each run to the same file: use the last run only (it starts with a START row
+// that has a real date; the 1970 one is the tester's own init check).
+const starts = allRows.map((r, i) => (r.ev === 'START' && r.t > 0 ? i : -1)).filter(i => i >= 0);
+const rows = allRows.slice(starts.length ? starts[starts.length - 1] : 0);
+const symbol = (rows[0] && /^(\S+) PERIOD/.exec(rows[0].detail) || [])[1];
+if (symbol && symbol !== 'XAUUSD.sml') { console.log('The last tester run was on ' + symbol + ', not XAUUSD.sml. Run it on gold.'); process.exit(1); }
 const ea = [];
 let open = null;
 rows.forEach(r => {

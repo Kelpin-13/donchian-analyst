@@ -162,6 +162,7 @@ void ClearTradeState()
   {
    GVDel("stop"); GVDel("sigbar"); GVDel("side"); GVDel("posid");
    GVDel("exit_pending"); GVDel("exit_tries"); GVDel("exit_err");
+   GlobalVariablesFlush();
   }
 
 void ClosePosition(const ulong ticket, const string why)
@@ -273,6 +274,7 @@ bool OpenPosition(const int dir, const double atr, const datetime sigBar)
    GVSet("posid", (double)trade.ResultOrder());                     // a position's id is its opening order's ticket
    GVSet("daytrades", GVGet("daytrades", 0) + 1);
    GVDel("entry_err");
+   GlobalVariablesFlush();                                         // on disk now, in case the PC loses power
    Journal(dir == 1 ? "ENTRY_LONG" : "ENTRY_SHORT",
            DoubleToString(lots, 3) + " lots at " + DoubleToString(fill, _Digits) +
            ", strategy stop " + DoubleToString(fill - dir * stopDist, _Digits) +
@@ -349,16 +351,31 @@ void Run()
 
    if(has)
      {
-      int bars = 0;
+      // State lost (crash before it was saved, new PC): rebuild it from the position itself.
       datetime sig = (datetime)GVGet("sigbar", 0);
-      for(int i = 0; i < n; i++) if(r[i].time > sig) bars++;
       double stop = GVGet("stop", 0);
-      if(stop == 0)
+      if((sig == 0 || stop == 0) && PositionSelectByTicket(ticket))
         {
-         stop = openPrice - side * InpStopAtr * atr;               // state lost (e.g. new PC): rebuild
-         GVSet("stop", stop);
-         Journal("WARN", "strategy stop was missing, rebuilt at " + DoubleToString(stop, _Digits));
+         if(sig == 0)
+           {
+            // Bars are counted from the entry bar, so the signal bar is "just before" it.
+            datetime opened = (datetime)PositionGetInteger(POSITION_TIME);
+            sig = iTime(_Symbol, InpTimeframe, iBarShift(_Symbol, InpTimeframe, opened)) - 1;
+            GVSet("sigbar", (double)sig);
+            Journal("WARN", "signal bar was missing, rebuilt from the open time " + TimeToString(opened, TIME_DATE | TIME_MINUTES));
+           }
+         if(stop == 0)
+           {
+            // The broker stop sits InpHardStopAtr ATRs out and the strategy stop InpStopAtr: scale it back.
+            double sl = PositionGetDouble(POSITION_SL);
+            stop = sl > 0 ? openPrice - (openPrice - sl) * InpStopAtr / InpHardStopAtr : openPrice - side * InpStopAtr * atr;
+            GVSet("stop", stop);
+            Journal("WARN", "strategy stop was missing, rebuilt at " + DoubleToString(stop, _Digits));
+           }
+         GlobalVariablesFlush();
         }
+      int bars = 0;
+      for(int i = 0; i < n; i++) if(r[i].time > sig) bars++;
       string why = "";
       if(side == 1)
         { if(c <= stop) why = "EXIT_STOP"; else if(c < xlo) why = "EXIT_CHANNEL"; else if(bars >= InpMaxBars) why = "EXIT_TIME"; }
@@ -388,6 +405,11 @@ int OnInit()
    if(!IsDemo())
      {
       Alert("DonchianGold refuses to run: this is not a demo account.");
+      return INIT_FAILED;
+     }
+   if(StringFind(_Symbol, "XAU") != 0)
+     {
+      Alert("DonchianGold trades gold only; it is attached to " + _Symbol + ". Attach it to an XAUUSD chart.");
       return INIT_FAILED;
      }
    if(InpBreakout < 2 || InpExit < 1 || InpEmaPeriod < 2 || InpAtrPeriod < 1 ||
