@@ -34,6 +34,8 @@ console.log('EA journal: ' + file);
 
 // FILE_ANSI csv: server_time,event,equity,detail
 const parseT = s => Date.parse(s.trim().replace(/\./g, '-').replace(' ', 'T') + 'Z');
+const H4 = 4 * 3600000;
+const barOf = t => Math.floor(t / H4) * H4;      // an order retried after the daily break still belongs to its bar
 const rows = fs.readFileSync(file, 'latin1').trim().split(/\r?\n/).slice(1).map(l => {
   const [t, ev, eq, ...rest] = l.split(',');
   return { t: parseT(t), ev: ev.trim(), eq: +eq, detail: rest.join(',') };
@@ -41,9 +43,11 @@ const rows = fs.readFileSync(file, 'latin1').trim().split(/\r?\n/).slice(1).map(
 const ea = [];
 let open = null;
 rows.forEach(r => {
-  if (r.ev === 'ENTRY_LONG' || r.ev === 'ENTRY_SHORT') open = { t: r.t, side: r.ev === 'ENTRY_LONG' ? 1 : -1 };
-  else if (/^EXIT_(STOP|CHANNEL|TIME)$/.test(r.ev) && open) {
-    ea.push(Object.assign(open, { exitT: r.t, why: r.ev.replace('EXIT_', '') }));
+  if (r.ev === 'ENTRY_LONG' || r.ev === 'ENTRY_SHORT') open = { t: barOf(r.t), side: r.ev === 'ENTRY_LONG' ? 1 : -1 };
+  else if ((/^EXIT_/.test(r.ev) || r.ev === 'KILL_SWITCH') && open) {
+    // A close the EA didn't make (the broker stop) is journaled on the next tick; the deal time says when it happened.
+    const deal = /deal time (\d{4}\.\d\d\.\d\d \d\d:\d\d:\d\d)/.exec(r.detail);
+    ea.push(Object.assign(open, { exitT: barOf(deal ? parseT(deal[1]) : r.t), why: r.ev.replace('EXIT_', '') }));
     open = null;
   }
 });
@@ -51,7 +55,7 @@ if (!ea.length) { console.log('The journal has no completed trades.'); process.e
 
 const bars = R.toH4(R.load('XAUUSD.sml_H1.csv'));
 const cfg = { dir: 'both', N: 20, M: 10, k: 2, ema: 100, maxBars: 60, barMin: 240, flat: false,
-              swapLong: -5.92, swapShort: 3.67, firstEntryMin: 0, lastEntryMin: 24 * 60, flatMin: Infinity,
+              swapLong: -5.92, swapShort: 3.67, hardK: 4, firstEntryMin: 0, lastEntryMin: 24 * 60, flatMin: Infinity,
               from: -Infinity, to: Infinity };
 // Compare from 3 months after the EA's first decision: before that, the EMA seeds differ
 // (the tester has older history than the exported file).
@@ -80,5 +84,8 @@ console.log('EA only: ' + onlyEa.length + ' | research only: ' + onlyRes.length)
 exitDiff.slice(0, 8).forEach(x => console.log('  exit differs  ' + side(x.ea.side) + ' ' + d(x.ea.t) + '  EA ' + d(x.ea.exitT) + ' ' + x.ea.why + '  vs research ' + d(x.res.exitT) + ' ' + x.res.why));
 onlyEa.slice(0, 8).forEach(t => console.log('  EA only       ' + side(t.side) + ' ' + d(t.t)));
 onlyRes.slice(0, 8).forEach(t => console.log('  research only ' + side(t.side) + ' ' + d(t.t)));
+const count = re => rows.filter(r => re.test(r.ev)).length;
+console.log('Journal: ' + count(/^ERROR$/) + ' error rows, ' + count(/^SKIP$/) + ' skipped entries, ' +
+            count(/^EXIT_HARDSTOP$/) + ' broker-stop exits, ' + count(/^EXIT_(MANUAL|EXTERNAL|STOPOUT)$/) + ' closes from outside the EA');
 const pct = eaIn.length ? same / Math.max(eaIn.length, res.length) * 100 : 0;
 console.log('\nParity: ' + pct.toFixed(1) + '% of trades identical' + (pct >= 95 ? ' → PASS' : ' → investigate the differences above'));

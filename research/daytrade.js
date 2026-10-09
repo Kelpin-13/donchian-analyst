@@ -13,6 +13,8 @@
  *     no swap is ever paid
  *   - costs as charged: MT5 bars are Bid prices. Buys fill at Ask = Bid + that
  *     bar's spread, sells at Bid; plus extra slippage per side.
+ *   - cfg.hardK (H4 runs: 4): the EA's broker-side stop, hardK ATRs from the
+ *     entry, which fires inside a bar (exit reason HARDSTOP).
  *
  * Results are in R (P&L ÷ the risk taken), which doesn't depend on leverage.
  * This is research only: nothing here trades.
@@ -67,6 +69,12 @@ function simulate(bars, cfg, ser) {
       pending = null;
     }
     if (pos) pos.bars++;
+    // The broker-side stop (the EA's catastrophe stop, cfg.hardK ATRs out) fires inside the bar: long on the Bid low,
+    // short on the Ask high. Filled at the stop, or at the open if the bar gapped through it.
+    if (pos && cfg.hardK && (pos.side === 1 ? k.l <= pos.hard : k.h + k.sp >= pos.hard)) {
+      close(pos, k, 'HARDSTOP', pos.side === 1 ? Math.min(k.o, pos.hard) : Math.max(k.o + k.sp, pos.hard));
+      pos = null;
+    }
     const up = s.entry.upper[i], lo = s.entry.lower[i], xu = s.exit.upper[i], xl = s.exit.lower[i];
     const e = s.ema[i], a = s.atr[i];
     if (up === null || lo === null || xu === null || xl === null || e === null || a === null) continue;
@@ -92,10 +100,14 @@ function simulate(bars, cfg, ser) {
     const side = sig.type === 'LONG' ? 1 : -1;
     // Buy at Ask (Bid + spread), sell at Bid; slippage against us either way.
     const fill = side === 1 ? (k.o + k.sp) * (1 + SLIP) : k.o * (1 - SLIP);
-    return { side, t: k.t, entry: fill, stop: fill - side * sig.stopDist, risk: sig.stopDist, bars: 0, spreadIn: k.sp, swap: 0 };
+    // The EA sets its broker stop from the quote it sends the order at (Ask for a buy, Bid for a sell).
+    const hard = (side === 1 ? k.o + k.sp : k.o) - side * (cfg.hardK || 0) * sig.stopDist / cfg.k;
+    return { side, t: k.t, entry: fill, stop: fill - side * sig.stopDist, hard, risk: sig.stopDist, bars: 0, spreadIn: k.sp, swap: 0 };
   }
-  function close(p, k, why) {
-    const fill = p.side === 1 ? k.o * (1 - SLIP) : (k.o + k.sp) * (1 + SLIP);
+  // px: the quote the exit trades at (Bid to sell a long, Ask to buy back a short); default this bar's open.
+  function close(p, k, why, px) {
+    if (px === undefined) px = p.side === 1 ? k.o : k.o + k.sp;
+    const fill = px * (1 - p.side * SLIP);
     const pnl = (fill - p.entry) * p.side + p.swap;     // per unit, swap included
     trades.push({ t: p.t, exitT: k.t, side: p.side, r: pnl / p.risk, why, bars: p.bars,
                   costR: ((p.side === 1 ? p.spreadIn : k.sp) + p.entry * SLIP * 2) / p.risk });
@@ -173,7 +185,7 @@ if (require.main === module) {
                 new Date(bars[bars.length - 1].t).toISOString().slice(0, 10) + ', median spread $' +
                 f2(bars.map(b => b.sp).sort((a, b) => a - b)[bars.length >> 1], 3));
     const base = S.h4
-      ? { N: 20, M: 10, k: 2, ema: 100, maxBars: 60, barMin: 240, flat: false, swapLong: -5.92, swapShort: 3.67,
+      ? { N: 20, M: 10, k: 2, ema: 100, maxBars: 60, barMin: 240, flat: false, swapLong: -5.92, swapShort: 3.67, hardK: 4,
           firstEntryMin: 0, lastEntryMin: 24 * 60, flatMin: Infinity, from: -Infinity, to: Infinity }
       : { N: 20, M: 10, k: 2, ema: 100, maxBars: 60, barMin: S.barMin,
           firstEntryMin: 2 * 60, lastEntryMin: 22 * 60, flatMin: 23 * 60, from: -Infinity, to: Infinity };
