@@ -23,6 +23,7 @@
 #property description "Donchian breakout on gold, long and short. Demo accounts only."
 
 #include <Trade\Trade.mqh>
+#include "SheetSync.mqh"
 
 input group "Strategy (must match research/daytrade.js)"
 input ENUM_TIMEFRAMES InpTimeframe  = PERIOD_H4; // Bar size the rules run on
@@ -171,7 +172,8 @@ void ClosePosition(const ulong ticket, const string why)
      {
       int tries = (int)GVGet("exit_tries", 0);
       Journal(why, "closed ticket " + IntegerToString((long)ticket) + " at " + DoubleToString(trade.ResultPrice(), _Digits) +
-              (tries > 0 ? " after " + IntegerToString(tries) + " failed attempts" : ""));
+              (tries > 0 ? " after " + IntegerToString(tries) + " failed attempts" : "") +
+              ", profit " + DoubleToString(PositionPnl(ticket), 2));
       ClearTradeState();
       return;
      }
@@ -208,6 +210,7 @@ void ReportOutsideClose(const int pendingExit)
                   ", deal time " + TimeToString((datetime)HistoryDealGetInteger(d, DEAL_TIME), TIME_DATE | TIME_SECONDS);
          break;
         }
+   if(posid > 0) detail += ", profit " + DoubleToString(PositionPnl(posid), 2);
    Journal(ev, detail);
    ClearTradeState();
   }
@@ -429,5 +432,10 @@ int OnInit()
 
 void OnDeinit(const int reason) { EventKillTimer(); Journal("STOP", "reason " + IntegerToString(reason)); }
 void OnTick()  { Run(); }
-void OnTimer() { Run(); }
+void OnTimer()
+  {
+   Run();
+   string problem = SheetSync("DonchianGold", JOURNAL, InpMagic, InpMagic);     // results to the Google Sheet
+   if(problem != "") Journal("WARN", problem);
+  }
 //+------------------------------------------------------------------+

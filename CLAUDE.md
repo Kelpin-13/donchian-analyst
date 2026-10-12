@@ -51,6 +51,8 @@ system in Google Apps Script, with a Claude-powered analyst. Focus: gold (XAUUSD
 | `Main.js` | Triggers (`setup`), monitor loop, menu, `checkInstall` |
 | `donchian_analyst.pine` | Same strategy in Pine v6 for TradingView — not uploaded to Apps Script |
 | `mt5/DonchianGold.mq5` | MT5 Expert Advisor: gold H4, long + short, **demo only**. Mirrors `research/daytrade.js` (H4 hold-overnight, both). Compile with MetaEditor; install under `MQL5/Experts/DonchianAnalyst/` |
+| `Mt5.js` | Receives both EAs' journals (doPost route `source: 'mt5'`, key `MT5_KEY`) and rebuilds MT5 Summary / MT5 Trades from MT5 Log |
+| `mt5/SheetSync.mqh` | Included by both EAs: sends new journal lines + a heartbeat to the web app from OnTimer (never in the tester or a bar's first minute) |
 | `mt5/GoldIntraday.mq5` | MT5 Expert Advisor: six intraday gold strategies on M15, flat by 23:00, 0.25% risk each, **demo only**, magic 20261013 + 1..6. Mirrors the portfolio in `research/intraday.js` |
 | `research/` | Node research on the broker's MT5 exports in `data/` (git-ignored): `daytrade.js` (day-trading vs H4 study), `intraday.js` (intraday strategy study + the EA's portfolio), `parity_mt5.js` / `parity_intraday.js` (each EA vs its research, trade by trade) |
 

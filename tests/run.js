@@ -273,6 +273,60 @@ E2.run('challengerBacktest()');
 ok(/TWELVEDATA_API_KEY/.test(rowsOf(E2, 'MM_Backtest').filter(r => r[1] === 'XAUUSD')[0][14]), 'without a key, gold is skipped with a clear note');
 
 /* ---------------------------------------------------------------- */
+section('MT5 results sheet');
+const M = world({ markets: MARKETS, props: { MT5_KEY: 'mk' } });
+M.setNow(Date.UTC(2026, 9, 12, 21));
+const post = body => M.run('doPost(' + JSON.stringify({ postData: { contents: JSON.stringify(body) } }) + ').getContent()');
+// Journal lines exactly as the two EAs write them (server time = UTC+3).
+const intradayLines = ['server_time,strategy,event,equity,detail',
+  '1970.01.01 00:00:00,ALL,START,0.00,tester init check',
+  '2026.10.12 01:05:00,ALL,START,10000.00,XAUUSD.sml, risk 0.25% a trade, strategies NY_ORB MOM_16, demo account 1',
+  '2026.10.12 16:00:01,MOM_16,ENTRY_SHORT,10000.00,gold down since the open (4160.000), with the H4 trend: 0.100 lots at 4155.000, stop 4180.000, risk 0.25%',
+  '2026.10.12 17:00:00,NY_ORB,ORDER,10000.00,buy stop at 4150.000, stop loss 4140.000, 0.250 lots, until 20:00',
+  '2026.10.12 17:10:00,MOM_16,EXIT_STOP,9750.00,closed at 4180.000, deal time 2026.10.12 17:10:00, profit -250.00',
+  '2026.10.12 17:20:03,NY_ORB,ENTRY_LONG,9750.00,stop order filled: 0.250 lots at 4150.300, stop 4140.000, risk 0.25%, opened 2026.10.12 17:20:02',
+  '2026.10.12 23:00:00,NY_ORB,EXIT_SESSION,10265.00,closed at 4170.900, deal time 2026.10.12 23:00:00, profit 515.00'];
+const h4Lines = ['server_time,event,equity,detail',
+  '2026.10.12 04:00:01,ENTRY_LONG,10000.00,0.040 lots at 4150.000, strategy stop 4100.000, broker stop 4050.000, risk 1.00%',
+  '2026.10.12 20:00:00,EXIT_CHANNEL,10365.00,closed ticket 7 at 4175.000 after 2 failed attempts, profit 100.00'];
+const base = { source: 'mt5', key: 'mk', offset: 10800, equity: 10365, balance: 10365, open: 0, floating: 0, from: 1 };
+ok(post(Object.assign({}, base, { key: 'wrong', ea: 'GoldIntraday', lines: intradayLines })) === 'rejected' && !M.sheets['MT5 Log'], 'a wrong key is rejected and nothing is stored');
+ok(post(Object.assign({}, base, { ea: 'Other', lines: intradayLines })) === 'rejected', 'an unknown EA is rejected');
+ok(post(Object.assign({}, base, { ea: 'GoldIntraday', lines: intradayLines })) === 'stored 6', 'intraday journal stored: 6 lines (header and the tester\'s 1970 line skipped)');
+ok(post(Object.assign({}, base, { ea: 'GoldIntraday', lines: intradayLines })) === 'stored 0', 'a resend after an EA restart stores nothing twice');
+ok(post(Object.assign({}, base, { ea: 'DonchianGold', lines: h4Lines })) === 'stored 2', 'H4 journal stored alongside');
+const logRows = rowsOf(M, 'MT5 Log');
+ok(logRows.some(r => r[1] === '2026.10.12 17:00:00' && new Date(r[0]).getTime() === Date.UTC(2026, 9, 12, 14)), 'server time 17:00 (UTC+3) is stored as 14:00 UTC');
+
+const tradeRows = rowsOf(M, 'MT5 Trades');
+const byName = n => tradeRows.filter(r => r[2] === n)[0] || [];
+ok(tradeRows.length === 3, 'three trades paired from entries and exits');
+ok(byName('New York opening range')[9] === 2 && byName('New York opening range')[10] === 515 && byName('New York opening range')[11] === 0.3,
+   'stop-order trade: +2R, +$515, filled $0.30 past its level');
+ok(byName('Momentum at 16:00')[9] === -1 && byName('Momentum at 16:00')[3] === 'SELL' && byName('Momentum at 16:00')[8] === 'Stop loss', 'short stopped out: -1R, plain-English reason');
+ok(byName('H4 swing breakout')[9] === 0.5 && byName('H4 swing breakout')[8] === 'Trend ended (10-bar channel)', 'H4 trade: +0.5R against its strategy stop');
+
+const sumRows = rowsOf(M, 'MT5 Summary');
+const sumRow = label => sumRows.filter(r => r && r[0] === label)[0] || [];
+ok(sumRow('All strategies')[1] === 3 && sumRow('All strategies')[7] === 365, 'summary totals: 3 trades, +$365');
+ok(sumRow('Profit / loss (closed trades)')[1] === 365 && sumRow('Closed trades')[1] === 3, 'account block agrees with the trades');
+ok(post(Object.assign({}, base, { ea: 'DonchianGold', lines: [], equity: 10400 })) === 'stored 0' && sumRow('Equity now')[1] === 10400 &&
+   Object.keys(JSON.parse(M.props.MT5_STATUS)).length === 2, 'a heartbeat refreshes equity and each EA\'s last contact');
+
+section('Switching the old system off');
+const O2 = world({ markets: MARKETS, props: { MT5_KEY: 'mk' }, triggers: ['runMonitor', 'runChallenger', 'runDailyBrief'] });
+O2.setNow(Date.UTC(2026, 9, 12, 21));
+O2.run('ensureSheets_(); logLine_("INFO", "old system was here")');
+O2.run('oldSystemOff()');
+const visible = Object.keys(O2.sheets).filter(n => !O2.sheets[n].isSheetHidden()).sort();
+ok(O2.triggers.length === 0 && !!O2.props.OLD_SYSTEM_OFF, 'every timer deleted and the switch recorded');
+ok(JSON.stringify(visible) === JSON.stringify(['MT5 Summary', 'MT5 Trades']) && O2.sheets.Signals && O2.sheets.Signals.rows.length > 0,
+   'only the MT5 tabs stay visible; old tabs are hidden with their data intact (' + visible.join(', ') + ')');
+ok(O2.run("post0 = doPost({ postData: { contents: JSON.stringify({ source: 'mt5', key: 'mk', ea: 'GoldIntraday', from: 1, offset: 10800, " +
+          "lines: ['2026.10.12 15:01:06,ALL,START,10000.00,XAUUSD.sml'] }) } }).getContent()") === 'stored 1',
+   'with the old system off, the MT5 receiver still stores what the EAs send');
+
+/* ---------------------------------------------------------------- */
 const ai = process.argv.indexOf('--against');
 if (ai !== -1) {
   const ref = process.argv[ai + 1] || 'HEAD';

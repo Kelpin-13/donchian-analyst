@@ -29,6 +29,7 @@
 #property description "Six intraday gold strategies, flat before the rollover. Demo accounts only."
 
 #include <Trade\Trade.mqh>
+#include "SheetSync.mqh"
 
 input group "Portfolio (must match research/intraday.js)"
 input bool   InpNyOrb      = true;     // 1 New York ORB 16:30-17:00, with the H4 trend
@@ -404,7 +405,8 @@ void CloseStrat(const int k, const string why)
    trade.SetExpertMagicNumber(Magic(k));
    if(trade.PositionClose(t, InpDeviationPts) && trade.ResultRetcode() == TRADE_RETCODE_DONE)
      {
-      Journal(k, "EXIT_" + why, "closed at " + Px(trade.ResultPrice()) + ", deal time " + TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS));
+      Journal(k, "EXIT_" + why, "closed at " + Px(trade.ResultPrice()) + ", deal time " + TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS) +
+              ", profit " + DoubleToString(PositionPnl(t), 2));
       g_posId[k] = 0;
       GVDel("pos" + IntegerToString(k));
       GlobalVariablesFlush();
@@ -443,6 +445,7 @@ void Reconcile()
                      TimeToString((datetime)HistoryDealGetInteger(d, DEAL_TIME), TIME_DATE | TIME_SECONDS);
             break;
            }
+      detail += ", profit " + DoubleToString(PositionPnl(posid), 2);
       Journal(k, ev, detail);
       g_posId[k] = 0;
       GVDel("pos" + IntegerToString(k));
@@ -754,5 +757,10 @@ int OnInit()
 
 void OnDeinit(const int reason) { EventKillTimer(); Journal(0, "STOP", "reason " + IntegerToString(reason)); }
 void OnTick()  { Run(); }
-void OnTimer() { Run(); }
+void OnTimer()
+  {
+   Run();
+   string problem = SheetSync("GoldIntraday", JOURNAL, InpMagicBase + 1, InpMagicBase + NS - 1);   // results to the Google Sheet
+   if(problem != "") Journal(0, "WARN", problem);
+  }
 //+------------------------------------------------------------------+

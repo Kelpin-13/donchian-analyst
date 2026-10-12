@@ -37,6 +37,9 @@ Sheets marked *overwritten* are replaced on every run; everything else is append
 | MM_Backtest | `challengerBacktest` | one row per market per run: 3-year return, trades, PF, drawdown, year by year, avg R, cost per side, swap rate and swap paid |
 | Ch_Trades, Ch_Equity | — | left over from the first (1h BTC) challenger; no longer written, safe to delete |
 | Crosscheck | webhook + monitor | status PENDING / MATCH / TV_ONLY / APPS_SCRIPT_ONLY |
+| MT5 Summary | `handleMt5_` (Mt5.gs) | *overwritten*: the page to read for the two MT5 EAs: account, "is it running?", per strategy vs backtest, last 10 trades, balance chart (data in hidden K:L). First tab |
+| MT5 Trades | `handleMt5_` | *overwritten*: one row per EA trade (open ones first, yellow), R, P&L, slippage of stop orders |
+| MT5 Log | `handleMt5_` | every journal line the EAs sent, once each (`Id` = EA:line:time); the source for the two sheets above |
 | History | `buildHistory`, `updateHistory`, `importTradingViewCsv` | `t_ms, time_utc, open, high, low, close, volume` |
 | BT_Summary, BT_Trades, BT_Equity, BT_Sweep, BT_WalkForward, BT_MonteCarlo, BT_Compare, BT_LiveVsBacktest | backtest stages | *overwritten* each run |
 | BT_Log | `runAutoBacktest` | one row per weekly run (`BT_LOG_HEADERS`) |
@@ -56,7 +59,10 @@ columns at the end is safe.
 | `TV_WEBHOOK_SECRET` | secret, optional | owner |
 | `TELEGRAM_BOT_TOKEN` | secret, optional | owner |
 | `DASHBOARD_URL` | web app link ending `/dev` (daily panel) — used by Show dashboard URL and Check installation | owner |
-| `WEBHOOK_URL` | web app link ending `/exec`, optional (TradingView/Telegram) | owner |
+| `WEBHOOK_URL` | web app link ending `/exec` (TradingView/Telegram, and the MT5 EAs' results) | owner |
+| `MT5_KEY` | secret — the key both EAs send with their journals; created by MT5 gold EAs → Connect MT5 | menu |
+| `MT5_STATUS` | JSON per EA: last contact, equity, balance, open positions, floating P&L | `handleMt5_` |
+| `OLD_SYSTEM_OFF` | ms timestamp: the old Apps Script trading system is switched off (no timers, old tabs hidden, short menu) | `oldSystemOff` / `oldSystemOn` |
 | `BOT_STATE` | JSON: position, entry, stop, barsInTrade, lastBarProcessed | monitor |
 | `PAPER_STATE` | JSON: cash, units, fees, peak, startedAt, lastSnapshotBar… | paper broker |
 | `LAST_MONITOR_RUN` | ms timestamp | monitor |
@@ -80,7 +86,11 @@ Check installation · Test data feed · Test live price · Dump indicators ·
 Carlo, TV compare, live decay, full automatic run ·
 **Lab**: add starters, run now, ask Claude, promote (holdout), show live, revert ·
 **Live**: check now, daily brief, grade, ask the agent, paper account, AI gate report, challenger vs current, challenger: backtest each market, challenger: walk-forward test, dashboard URL ·
-**TradingView**: test webhook · Show scorecard · **Reset**: position state, paper account, challenger.
+**TradingView**: test webhook · **MT5 gold EAs**: connect MT5 (link + key), rebuild the MT5 Summary,
+switch off the old system · Show scorecard · **Reset**: position state, paper account, challenger.
+
+With `OLD_SYSTEM_OFF` set the menu is only: Connect MT5 · Rebuild the MT5 Summary now · Check installation ·
+Turn the old system back on.
 
 `checkInstall()` / `installChecks_(skipApi)` detect stale files by looking for a function
 that exists only in the current version of each file. When adding a file or a

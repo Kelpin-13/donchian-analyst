@@ -4,6 +4,7 @@
  * One Apps Script web app has one URL and one doPost(). This file routes:
  *   TradingView alerts  ->  handleTradingView_()
  *   Telegram updates    ->  handleTelegram_()  (in Agent.gs)
+ *   MT5 EA journals     ->  handleMt5_()       (in Mt5.gs; the EA reads the reply)
  *
  * ---------------------------------------------------------------------------
  * THE CROSS-CHECK IDEA
@@ -40,6 +41,7 @@ function doPost(e) {
   }
 
   try {
+    if (body && body.source === 'mt5') return ContentService.createTextOutput(handleMt5_(body));
     if (body && body.source === 'tradingview') handleTradingView_(body);
     else if (body && body.update_id !== undefined) handleTelegram_(body);
     else logLine_('WARN', 'doPost: unrecognised payload');

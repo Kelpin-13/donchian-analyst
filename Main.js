@@ -50,6 +50,41 @@ function setup() {
   Logger.log('Setup done. Now run testFeed(), then backtest(), before trusting anything.');
 }
 
+/**
+ * Menu: switch the old Apps Script trading system off. Trading now happens in the MT5 EAs; this
+ * spreadsheet keeps only their results. Every timer is deleted (the MT5 receiver needs none: the EAs'
+ * POSTs wake it), every tab but the MT5 ones is hidden, not deleted, and the menu shrinks to MT5 items.
+ * Undo: Trading Agent → Turn the old system back on.
+ */
+function oldSystemOff() {
+  const triggers = ScriptApp.getProjectTriggers();
+  triggers.forEach(t => ScriptApp.deleteTrigger(t));
+  PropertiesService.getScriptProperties().setProperty('OLD_SYSTEM_OFF', String(Date.now()));
+  const lock = LockService.getScriptLock();
+  lock.tryLock(20000);
+  try { mt5Rebuild_(); } finally { lock.releaseLock(); }          // the MT5 tabs exist before the rest is hidden
+  const keep = [MT5_SUMMARY, MT5_TRADES, MT5_LOG];
+  let hidden = 0;
+  ss_().getSheets().forEach(s => {
+    if (keep.indexOf(s.getName()) === -1 && !s.isSheetHidden()) { s.hideSheet(); hidden++; }
+  });
+  logLine_('INFO', 'Old system switched off: ' + triggers.length + ' timers deleted, ' + hidden + ' tabs hidden');
+  try {
+    ss_().setActiveSheet(ss_().getSheetByName(MT5_SUMMARY));
+    SpreadsheetApp.getUi().alert('Old system switched off',
+      triggers.length + ' timers stopped and ' + hidden + ' old tabs hidden (View → Hidden sheets still shows them; nothing was deleted).\n\n' +
+      'Only the MT5 results are left. Reload the page for the shorter menu.', SpreadsheetApp.getUi().ButtonSet.OK);
+  } catch (e) {}
+}
+
+/** Menu: undo oldSystemOff — timers back (setup) and every tab visible again. */
+function oldSystemOn() {
+  PropertiesService.getScriptProperties().deleteProperty('OLD_SYSTEM_OFF');
+  setup();
+  ss_().getSheets().forEach(s => { if (s.isSheetHidden()) s.showSheet(); });
+  try { SpreadsheetApp.getUi().alert('Old system back on', 'Timers reinstalled and all tabs shown. Reload the page for the full menu.', SpreadsheetApp.getUi().ButtonSet.OK); } catch (e) {}
+}
+
 /** ---------- THE MONITOR LOOP ---------- */
 function runMonitor() {
   const lock = LockService.getScriptLock();
@@ -212,6 +247,16 @@ function sendAlert_(text) {
 /** ---------- SHEET MENU ---------- */
 function onOpen() {
   const ui = SpreadsheetApp.getUi();
+  if (secret_('OLD_SYSTEM_OFF', false)) {                // the sheet is the MT5 results book now
+    ui.createMenu('Trading Agent')
+      .addItem('Connect MT5 (link + key for the EAs)', 'mt5Connect')
+      .addItem('Rebuild the MT5 Summary now', 'mt5RebuildNow')
+      .addSeparator()
+      .addItem('Check installation', 'checkInstall')
+      .addItem('Turn the old system back on', 'oldSystemOn')
+      .addToUi();
+    return;
+  }
   ui.createMenu('Trading Agent')
     .addItem('Check installation', 'checkInstall')
     .addSeparator()
@@ -254,6 +299,11 @@ function onOpen() {
       .addItem('Show dashboard URL', 'showDashboardUrl'))
     .addSubMenu(ui.createMenu('TradingView')
       .addItem('Send a test webhook', 'testTradingViewWebhook'))
+    .addSubMenu(ui.createMenu('MT5 gold EAs')
+      .addItem('Connect MT5 (link + key for the EAs)', 'mt5Connect')
+      .addItem('Rebuild the MT5 Summary now', 'mt5RebuildNow')
+      .addSeparator()
+      .addItem('Switch off the old system (keep only MT5 results)', 'oldSystemOff'))
     .addSeparator()
     .addItem('Show scorecard', 'showScorecard')
     .addSubMenu(ui.createMenu('Reset')
@@ -397,6 +447,13 @@ function installChecks_(skipApi) {
     need(typeof gateOnBar_ === 'function' && CONFIG.GATE !== undefined, 'AiGate.gs (and Config.gs)');
     return 'mode ' + CONFIG.GATE.mode + ', model ' + CONFIG.GATE.model;
   });
+  check('Mt5.gs', () => {
+    need(typeof handleMt5_ === 'function' && String(doPost).indexOf('handleMt5_') !== -1, 'Mt5.gs (and Webhook.gs)');
+    const st = mt5Status_(), eas = Object.keys(MT5_EAS);
+    if (!secret_('MT5_KEY', false)) return 'not connected yet: menu MT5 gold EAs → Connect MT5';
+    return eas.map(ea => ea + (st[ea] ? ' last heard ' + Utilities.formatDate(new Date(st[ea].seen), Session.getScriptTimeZone(), 'd MMM HH:mm')
+                                       : ' not heard from yet')).join(', ');
+  });
   check('History.gs is current', () => need(typeof updateHistory === 'function', 'History.gs'));
   check('Config.gs is current', () => need(CONFIG.BACKTEST.minTrades !== undefined && CONFIG.LAB !== undefined, 'Config.gs'));
   check('DashboardPage.html', () => { HtmlService.createTemplateFromFile('DashboardPage'); });
@@ -439,6 +496,7 @@ function installChecks_(skipApi) {
   });
   check('Triggers', () => {
     const t = ScriptApp.getProjectTriggers().map(x => x.getHandlerFunction());
+    if (secret_('OLD_SYSTEM_OFF', false)) return 'old system switched off: no timers (' + (t.length ? 'but found ' + t.join(', ') : 'none found') + ')';
     if (t.indexOf('runMonitor') === -1) return { todo: 'run setup() when you are ready to go live' };
     if (CONFIG.BACKTEST.autoEnabled && t.indexOf('runAutoBacktest') === -1) {
       return { todo: 'run setup() again to add the weekly automatic backtest' };

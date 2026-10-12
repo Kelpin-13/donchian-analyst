@@ -68,13 +68,28 @@ function aggregate(hourly, size, now) {
   return Object.values(agg).sort((a, b) => a.t - b.t).map(x => Object.assign(x, { complete: x.t + size <= now }));
 }
 
+/**
+ * Formatting calls (fonts, colours, widths, charts...) don't change values, so the fakes accept any
+ * method they don't implement and return themselves, like Apps Script's chainable builders.
+ */
+function chainable(obj) {
+  const p = new Proxy(obj, { get: (o, k) => (k in o || typeof k === 'symbol' ? o[k] : () => p) });
+  return p;
+}
+
 function fakeSheets() {
   const sheets = {};
-  const mk = () => {
+  const mk = name => chainable(mkSheet(name));
+  const mkSheet = name => {
     const rows = [];
     const cell = (r, c) => { rows[r - 1] = rows[r - 1] || []; return rows[r - 1]; };
+    let hidden = false;
     return {
       rows,
+      getName: () => name,
+      isSheetHidden: () => hidden,
+      hideSheet: () => { hidden = true; },
+      showSheet: () => { hidden = false; },
       getLastRow: () => rows.length,
       getLastColumn: () => rows.reduce((m, r) => Math.max(m, r ? r.length : 0), 0),
       appendRow: r => rows.push(r.slice()),
@@ -83,18 +98,19 @@ function fakeSheets() {
       setFrozenRows: () => {},
       getCharts: () => [], removeChart: () => {}, clearConditionalFormatRules: () => {},
       getRange: (r, c, n = 1, w = 1) => {
-        const rng = {                                   // like Apps Script, setters return the range for chaining
+        let rng;                                        // like Apps Script, setters return the range for chaining
+        rng = chainable({
           getValue: () => (rows[r - 1] || [])[c - 1],
           getValues: () => rows.slice(r - 1, r - 1 + n).map(x => { const a = (x || []).slice(c - 1, c - 1 + w); while (a.length < w) a.push(''); return a; }),
           setValue: v => { cell(r, c)[c - 1] = v; return rng; },
-          setValues: vs => { vs.forEach((v, j) => v.forEach((x, k) => { cell(r + j, c)[c - 1 + k] = x; })); return rng; },
-          setFontWeight: () => rng, setBackground: () => rng, setNumberFormat: () => rng, setBorder: () => rng
-        };
+          setValues: vs => { vs.forEach((v, j) => v.forEach((x, k) => { cell(r + j, c)[c - 1 + k] = x; })); return rng; }
+        });
         return rng;
       }
     };
   };
-  return { sheets, ss: { getSheetByName: n => sheets[n] || null, insertSheet: n => (sheets[n] = mk()) } };
+  return { sheets, ss: chainable({ getSheetByName: n => sheets[n] || null, insertSheet: n => (sheets[n] = mk(n)),
+                                   getSheets: () => Object.keys(sheets).map(n => sheets[n]) }) };
 }
 
 /**
@@ -107,6 +123,7 @@ function world(opts) {
   const { sheets, ss } = fakeSheets();
   const props = Object.assign({ ANTHROPIC_API_KEY: 'test' }, o.props || {});
   const calls = [], callTimes = [], cacheStore = {};
+  const triggers = (o.triggers || []).map(h => ({ getHandlerFunction: () => h }));   // installed timers, by handler
   let now = 0;
 
   class FakeDate extends Date {
@@ -190,6 +207,9 @@ function world(opts) {
       put: (k, v, sec) => { cacheStore[k] = { v: String(v), exp: now + (sec || 600) * 1000 }; }
     }) },
     Utilities: { formatDate: d => new Date(d).toISOString(), sleep: () => {} },
+    Session: { getScriptTimeZone: () => 'Asia/Singapore' },
+    ScriptApp: { getProjectTriggers: () => triggers.slice(), deleteTrigger: t => { triggers.splice(triggers.indexOf(t), 1); } },
+    ContentService: { createTextOutput: s => ({ getContent: () => String(s) }) },
     MailApp: { sendEmail: () => {} },
     UrlFetchApp: { fetch }
   };
@@ -201,7 +221,7 @@ function world(opts) {
   // Claude-backed steps are replaced: tests check plumbing, not model output.
   run(`agentPreTradeNote_ = function () { return { setup: 'test', invalidation: '', watch: '', confidence: 'n/a' }; };
        if (CONFIG.GATE) CONFIG.GATE.mode = 'off';`);
-  return { ctx, run, sheets, props, calls, callTimes, setNow: t => { now = t; }, get now() { return now; } };
+  return { ctx, run, sheets, props, calls, callTimes, triggers, setNow: t => { now = t; }, get now() { return now; } };
 }
 
 module.exports = { world, makeMarkets, makeHourly, H, VALID_KEYS };
