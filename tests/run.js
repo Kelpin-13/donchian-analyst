@@ -309,9 +309,18 @@ ok(byName('H4 swing breakout')[9] === 0.5 && byName('H4 swing breakout')[8] === 
 const sumRows = rowsOf(M, 'MT5 Summary');
 const sumRow = label => sumRows.filter(r => r && r[0] === label)[0] || [];
 ok(sumRow('All strategies')[1] === 3 && sumRow('All strategies')[7] === 365, 'summary totals: 3 trades, +$365');
-ok(sumRow('Profit / loss (closed trades)')[1] === 365 && sumRow('Closed trades')[1] === 3, 'account block agrees with the trades');
+ok(sumRow('Profit / loss')[1] === 365 && sumRow('Closed trades')[1] === 3, 'account block agrees with the trades');
 ok(post(Object.assign({}, base, { ea: 'DonchianGold', lines: [], equity: 10400 })) === 'stored 0' && sumRow('Equity now')[1] === 10400 &&
    Object.keys(JSON.parse(M.props.MT5_STATUS)).length === 2, 'a heartbeat refreshes equity and each EA\'s last contact');
+
+const stratRows = rowsOf(M, 'MT5 Strategies');
+const glanceRow = name => stratRows.filter(r => r && r[0] === name)[0] || [];
+const cards = stratRows.filter(r => r && /^  \d+   /.test(String(r[0]))).length;
+ok(glanceRow('New York opening range')[2] === '22:00–01:00' && glanceRow('Momentum at 16:00')[2] === '21:00',
+   'strategy times shown in the owner\'s clock (broker 17:00-20:00 → 22:00–01:00 at UTC+8)');
+ok(cards === 7 && stratRows.some(r => r && /closed by 04:00 \(broker 23:00\)/.test(String(r[1]))), 'one card per strategy (7), with both clocks in the details');
+ok(M.run('MT5_STRATEGIES').every(st => st.name && st.idea && st.entry && st.stop && st.exit && st.trades > 0 && st.years.length === 4),
+   'every strategy is fully described, with its backtest record');
 
 section('Switching the old system off');
 const O2 = world({ markets: MARKETS, props: { MT5_KEY: 'mk' }, triggers: ['runMonitor', 'runChallenger', 'runDailyBrief'] });
@@ -320,7 +329,7 @@ O2.run('ensureSheets_(); logLine_("INFO", "old system was here")');
 O2.run('oldSystemOff()');
 const visible = Object.keys(O2.sheets).filter(n => !O2.sheets[n].isSheetHidden()).sort();
 ok(O2.triggers.length === 0 && !!O2.props.OLD_SYSTEM_OFF, 'every timer deleted and the switch recorded');
-ok(JSON.stringify(visible) === JSON.stringify(['MT5 Summary', 'MT5 Trades']) && O2.sheets.Signals && O2.sheets.Signals.rows.length > 0,
+ok(JSON.stringify(visible) === JSON.stringify(['MT5 Strategies', 'MT5 Summary', 'MT5 Trades']) && O2.sheets.Signals && O2.sheets.Signals.rows.length > 0,
    'only the MT5 tabs stay visible; old tabs are hidden with their data intact (' + visible.join(', ') + ')');
 ok(O2.run("post0 = doPost({ postData: { contents: JSON.stringify({ source: 'mt5', key: 'mk', ea: 'GoldIntraday', from: 1, offset: 10800, " +
           "lines: ['2026.10.12 15:01:06,ALL,START,10000.00,XAUUSD.sml'] }) } }).getContent()") === 'stored 1',

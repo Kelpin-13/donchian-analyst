@@ -38,6 +38,7 @@ Sheets marked *overwritten* are replaced on every run; everything else is append
 | Ch_Trades, Ch_Equity | — | left over from the first (1h BTC) challenger; no longer written, safe to delete |
 | Crosscheck | webhook + monitor | status PENDING / MATCH / TV_ONLY / APPS_SCRIPT_ONLY |
 | MT5 Summary | `handleMt5_` (Mt5.gs) | *overwritten*: the page to read for the two MT5 EAs: account, "is it running?", per strategy vs backtest, last 10 trades, balance chart (data in hidden K:L). First tab |
+| MT5 Strategies | `mt5WriteStrategies_` | *overwritten* when asked (menu Rebuild) or when the clocks change: every strategy in plain English (at a glance, the rules, one card each with its backtest record), times in the owner's clock. Text lives in `MT5_STRATEGIES` / `MT5_RULES` (Mt5.gs) and must match the EAs |
 | MT5 Trades | `handleMt5_` | *overwritten*: one row per EA trade (open ones first, yellow), R, P&L, slippage of stop orders |
 | MT5 Log | `handleMt5_` | every journal line the EAs sent, once each (`Id` = EA:line:time); the source for the two sheets above |
 | History | `buildHistory`, `updateHistory`, `importTradingViewCsv` | `t_ms, time_utc, open, high, low, close, volume` |
@@ -62,6 +63,7 @@ columns at the end is safe.
 | `WEBHOOK_URL` | web app link ending `/exec` (TradingView/Telegram, and the MT5 EAs' results) | owner |
 | `MT5_KEY` | secret — the key both EAs send with their journals; created by MT5 gold EAs → Connect MT5 | menu |
 | `MT5_STATUS` | JSON per EA: last contact, equity, balance, open positions, floating P&L | `handleMt5_` |
+| `MT5_STRAT_DONE` | version + clock shift the MT5 Strategies tab was last written for | `mt5WriteStrategies_` |
 | `OLD_SYSTEM_OFF` | ms timestamp: the old Apps Script trading system is switched off (no timers, old tabs hidden, short menu) | `oldSystemOff` / `oldSystemOn` |
 | `BOT_STATE` | JSON: position, entry, stop, barsInTrade, lastBarProcessed | monitor |
 | `PAPER_STATE` | JSON: cash, units, fees, peak, startedAt, lastSnapshotBar… | paper broker |

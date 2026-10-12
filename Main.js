@@ -63,7 +63,7 @@ function oldSystemOff() {
   const lock = LockService.getScriptLock();
   lock.tryLock(20000);
   try { mt5Rebuild_(); } finally { lock.releaseLock(); }          // the MT5 tabs exist before the rest is hidden
-  const keep = [MT5_SUMMARY, MT5_TRADES, MT5_LOG];
+  const keep = [MT5_SUMMARY, MT5_STRATEGIES_SHEET, MT5_TRADES, MT5_LOG];
   let hidden = 0;
   ss_().getSheets().forEach(s => {
     if (keep.indexOf(s.getName()) === -1 && !s.isSheetHidden()) { s.hideSheet(); hidden++; }

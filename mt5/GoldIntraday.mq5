@@ -73,6 +73,8 @@ DayInfo g_day;
 struct Want
   {
    bool   on, placed, watch;
+   bool   chase;                                    // a level already passed may be taken at market: only on the
+                                                    // bar that first sets the order (the research's gap fill)
    double level, sl;                                // on the broker's price grid
    int    until;                                    // minute of the day it lapses
    int    sends;                                    // orders sent for it (a guard against a resend loop)
@@ -93,6 +95,8 @@ ulong    g_posId[NS];                  // the position each strategy holds (mirr
 int      g_side[NS];
 long     g_flatDay = -1;
 int      g_flatMin = 23 * 60;
+bool     g_armed = false;              // the wants are set for the bar in progress (false right after a start)
+bool     g_noChase = false;            // armed mid-bar after a start: a level already passed is not chased
 
 //--- small helpers ----------------------------------------------------------
 double GVGet(const string name, const double def) { string k = GVP + name; return GlobalVariableCheck(k) ? GlobalVariableGet(k) : def; }
@@ -473,8 +477,9 @@ void TrackFills()
   }
 
 //--- the strategies' decisions ------------------------------------------------
-void SetWant(const int k, const int s, const double level, const double sl, const int until)
+void SetWant(const int k, const int s, const double level, const double sl, const int until, const bool chase)
   {
+   g_want[k][s].chase = chase;
    // The broker stores prices on its grid; compare like with like, or the order looks changed every tick.
    double level0 = NormalizeDouble(level, _Digits), sl0 = NormalizeDouble(sl, _Digits);
    Want w = g_want[k][s];
@@ -493,9 +498,12 @@ void WantDualThrust(const int m)
    ulong t; int side; datetime o;
    bool has = FindPos(3, t, side, o);
    if(!has && g_trades[3] == 0)
-     { SetWant(3, 0, g_day.dtUp, g_day.dtDn, 20 * 60); SetWant(3, 1, g_day.dtDn, g_day.dtUp, 20 * 60); }
-   else if(has && side == 1) SetWant(3, 1, g_day.dtDn, g_day.dtUp, 20 * 60);
-   else if(has && side == -1) SetWant(3, 0, g_day.dtUp, g_day.dtDn, 20 * 60);
+     {
+      bool opening = m < 75;                                        // the day's first bars: where its orders are set
+      SetWant(3, 0, g_day.dtUp, g_day.dtDn, 20 * 60, opening); SetWant(3, 1, g_day.dtDn, g_day.dtUp, 20 * 60, opening);
+     }
+   else if(has && side == 1) SetWant(3, 1, g_day.dtDn, g_day.dtUp, 20 * 60, true);    // the reversal, at its stop
+   else if(has && side == -1) SetWant(3, 0, g_day.dtUp, g_day.dtDn, 20 * 60, true);
   }
 
 // At each new M15 bar, on the bar that just closed: R-Breaker and the two momentum entries (market orders now).
@@ -559,13 +567,13 @@ void Arm(const datetime cur)
       RangeOf(day, 16 * 60 + 30, 17 * 60, hi, lo, seen) >= 2 && seen)
      {
       int trend = TrendAt((datetime)(day * 86400 + (16 * 60 + 45) * 60));
-      if(trend == 1)  SetWant(1, 0, hi, lo, 20 * 60);
-      if(trend == -1) SetWant(1, 1, lo, hi, 20 * 60);
+      if(trend == 1)  SetWant(1, 0, hi, lo, 20 * 60, m == 17 * 60);
+      if(trend == -1) SetWant(1, 1, lo, hi, 20 * 60, m == 17 * 60);
      }
    // 2  Asian range breakout (Crabel): the 01:00-09:00 range, only on narrow nights; both sides until 15:00.
    if(InpAsian && m >= 9 * 60 && m < 15 * 60 && g_trades[2] < MAXDAY[2] && !HasPos(2) && g_day.atrPrev > 0 &&
       RangeOf(day, 60, 9 * 60, hi, lo, seen) >= 24 && seen && (hi - lo) / g_day.atrPrev < InpNarrow)
-     { SetWant(2, 0, hi, lo, 15 * 60); SetWant(2, 1, lo, hi, 15 * 60); }
+     { SetWant(2, 0, hi, lo, 15 * 60, m == 9 * 60); SetWant(2, 1, lo, hi, 15 * 60, m == 9 * 60); }
    // 3  Dual Thrust
    WantDualThrust(m);
   }
@@ -607,6 +615,8 @@ void SyncOrders()
            }
          // Our order is gone: it filled (TrackFills picks the position up) or lapsed. Never enter twice.
          if(g_want[k][s].placed) { g_want[k][s].on = false; continue; }
+         // A level passed with no order resting (the EA was asleep or restarting) is never chased at a worse price.
+         if(reached && !g_want[k][s].watch && (g_noChase || !g_want[k][s].chase)) { g_want[k][s].on = false; continue; }
          if(g_want[k][s].watch || reached)
            {
             if(!reached) continue;
@@ -711,6 +721,18 @@ void Run()
       datetime closed = iTime(_Symbol, PERIOD_M15, 1);
       if(DayOf(closed) == DayOf(cur) && MinOfDay(closed) < FLAT) Decide(closed, cur);
       Arm(cur);
+      g_armed = true;
+      g_noChase = false;
+     }
+   if(!g_armed)
+     {
+      // Just (re)started inside a bar: rebuild what the strategies want now, so the stop orders already resting
+      // at the broker are kept, not cancelled. A level passed while the EA was away is not chased.
+      if(!LoadDay(DayOf(cur))) return;
+      CountTrades();
+      Arm(cur);
+      g_armed = true;
+      g_noChase = true;
      }
    SendQueued(cur);
    SyncOrders();
@@ -747,6 +769,7 @@ int OnInit()
       g_side[k] = k > 0 ? (int)GVGet("side" + IntegerToString(k), 0) : 0;
      }
    g_day.day = -1; g_day.ok = false;
+   g_armed = false; g_noChase = false;
    EventSetTimer(10);
    Journal(0, "START", _Symbol + ", risk " + DoubleToString(InpRiskPct, 2) + "% a trade, strategies" +
            (InpNyOrb ? " NY_ORB" : "") + (InpAsian ? " ASIAN_NARROW" : "") + (InpDualThrust ? " DUAL_THRUST" : "") +
