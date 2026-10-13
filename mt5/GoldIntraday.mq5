@@ -45,6 +45,14 @@ input double InpRiskPct      = 0.25;   // % of equity lost if a trade's stop is 
 input double InpMaxLeverage  = 3.0;    // One position's value capped at equity x this
 input double InpDailyLossPct = 2.0;    // No new entries after equity falls this % in a server day
 
+input group "Risk per strategy (x the risk above; 1 = the same, 0.5 = half)"
+input double InpWNyOrb      = 1.0;     // 1 New York ORB
+input double InpWAsian      = 1.0;     // 2 Asian range breakout
+input double InpWDualThrust = 1.0;     // 3 Dual Thrust
+input double InpWRBreaker   = 1.0;     // 4 R-Breaker
+input double InpWMom16      = 1.0;     // 5 Momentum at 16:00
+input double InpWMom20      = 1.0;     // 6 Momentum at 20:00
+
 input group "Housekeeping"
 input long   InpMagicBase    = 20261013; // Strategy k trades with magic number base + k
 input int    InpDeviationPts = 50;       // Max price deviation for market orders, points
@@ -53,7 +61,7 @@ input int    InpDeviationPts = 50;       // Max price deviation for market order
 string NAMES[NS]  = { "ALL", "NY_ORB", "ASIAN_NARROW", "DUAL_THRUST", "R_BREAKER", "MOM_16", "MOM_20" };
 int    MAXDAY[NS] = { 0, 1, 1, 3, 2, 1, 1 };       // entries per server day, as in the research
 const int FLAT = 23 * 60;                           // flat from 23:00 server time, an hour before the rollover
-const string JOURNAL = "GoldIntraday_journal.csv";
+string JOURNAL = "GoldIntraday_journal.csv";        // in the tester: one file per run, named by its start date
 
 CTrade trade;
 string GVP;
@@ -107,6 +115,22 @@ long   DayOf(const datetime t)    { return (long)t / 86400; }
 long   Magic(const int k)         { return InpMagicBase + k; }
 string Px(const double p)         { return DoubleToString(p, _Digits); }
 string Hm(const int m)            { return StringFormat("%02d:%02d", m / 60, m % 60); }
+
+// Strategy k's share of InpRiskPct.
+double Weight(const int k)
+  {
+   switch(k)
+     {
+      case 1: return InpWNyOrb;
+      case 2: return InpWAsian;
+      case 3: return InpWDualThrust;
+      case 4: return InpWRBreaker;
+      case 5: return InpWMom16;
+      case 6: return InpWMom20;
+     }
+   return 1;
+  }
+string RiskText(const int k) { return DoubleToString(InpRiskPct * Weight(k), 3) + "%"; }
 
 bool IsDemo()
   {
@@ -308,15 +332,15 @@ bool EntryAllowed(string &reason)
    return true;
   }
 
-// Lots so that the stop costs InpRiskPct of equity, capped by leverage and the broker's volume limits.
-double LotsFor(const double dist, const double price, string &reason)
+// Lots so that strategy k's stop costs its share of InpRiskPct, capped by leverage and the broker's volume limits.
+double LotsFor(const int k, const double dist, const double price, string &reason)
   {
    double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
    double tickVal = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
    double contract = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
    if(tickSize <= 0 || tickVal <= 0 || contract <= 0 || price <= 0 || dist <= 0) { reason = "symbol data not ready"; return 0; }
    double eq = AccountInfoDouble(ACCOUNT_EQUITY);
-   double lots = eq * InpRiskPct / 100.0 / (dist / tickSize * tickVal);
+   double lots = eq * InpRiskPct * Weight(k) / 100.0 / (dist / tickSize * tickVal);
    lots = MathMin(lots, eq * InpMaxLeverage / (price * contract));
    double step = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
    lots = MathMin(MathFloor(lots / step) * step, SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX));
@@ -346,7 +370,7 @@ bool Enter(const int k, const int dir, const double slAbs, const double stopDist
    double dist = (price - sl) * dir;
    double minStop = (double)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) * _Point;
    if(dist <= minStop) { Journal(k, "SKIP", "price " + Px(price) + " already at or beyond the stop " + Px(sl)); return false; }
-   double lots = LotsFor(dist, price, reason);
+   double lots = LotsFor(k, dist, price, reason);
    if(lots <= 0) { if(reason == "symbol data not ready") return true; Journal(k, "SKIP", reason); return false; }
    double margin = 0;
    if(OrderCalcMargin(dir == 1 ? ORDER_TYPE_BUY : ORDER_TYPE_SELL, _Symbol, lots, price, margin) && margin > AccountInfoDouble(ACCOUNT_MARGIN_FREE))
@@ -364,7 +388,7 @@ bool Enter(const int k, const int dir, const double slAbs, const double stopDist
    g_lastErr[k] = 0;
    Remember(k, trade.ResultOrder(), dir);                         // a position's id is its opening order's ticket
    Journal(k, dir == 1 ? "ENTRY_LONG" : "ENTRY_SHORT", why + ": " + DoubleToString(lots, 3) + " lots at " + Px(fill) +
-           ", stop " + Px(sl) + ", risk " + DoubleToString(InpRiskPct, 2) + "%");
+           ", stop " + Px(sl) + ", risk " + RiskText(k));
    return false;
   }
 
@@ -375,7 +399,7 @@ int PlaceStop(const int k, const int s, const Want &w)
    if(!IsDemo()) { Alert("GoldIntraday: not a demo account. No order sent."); ExpertRemove(); return 1; }
    int dir = s == 0 ? 1 : -1;
    string reason = "";
-   double lots = LotsFor(MathAbs(w.level - w.sl), w.level, reason);
+   double lots = LotsFor(k, MathAbs(w.level - w.sl), w.level, reason);
    if(lots <= 0)
      {
       long today = DayOf(TimeCurrent());                          // asked again every bar: say it once a day
@@ -471,7 +495,7 @@ void TrackFills()
       g_lastErr[k] = 0;
       Journal(k, side == 1 ? "ENTRY_LONG" : "ENTRY_SHORT", "stop order filled: " + DoubleToString(PositionGetDouble(POSITION_VOLUME), 3) +
               " lots at " + Px(PositionGetDouble(POSITION_PRICE_OPEN)) + ", stop " + Px(PositionGetDouble(POSITION_SL)) +
-              ", risk " + DoubleToString(InpRiskPct, 2) + "%, opened " + TimeToString(o, TIME_DATE | TIME_SECONDS));
+              ", risk " + RiskText(k) + ", opened " + TimeToString(o, TIME_DATE | TIME_SECONDS));
       if(k == 3) WantDualThrust(MinOfDay(TimeCurrent()));        // its stop-and-reverse order
      }
   }
@@ -754,6 +778,11 @@ int OnInit()
      }
    if(InpRiskPct <= 0 || InpRiskPct > 1 || InpNarrow <= 0 || InpDailyLossPct <= 0)
       return INIT_PARAMETERS_INCORRECT;                        // more than 1% a trade is refused outright
+   for(int k = 1; k < NS; k++)
+      if(Weight(k) <= 0 || Weight(k) > 2 || InpRiskPct * Weight(k) > 1)
+         return INIT_PARAMETERS_INCORRECT;                     // a weight between 0 and 2, and never above 1% a trade
+   if(MQLInfoInteger(MQL_TESTER))                              // one journal per test run, so several runs can be compared
+      JOURNAL = "GoldIntraday_journal_" + TimeToString(TimeCurrent(), TIME_DATE) + ".csv";
    trade.SetDeviationInPoints(InpDeviationPts);
    trade.SetTypeFillingBySymbol(_Symbol);
    trade.LogLevel(LOG_LEVEL_NO);                               // the journal records every failure once
@@ -774,6 +803,8 @@ int OnInit()
    Journal(0, "START", _Symbol + ", risk " + DoubleToString(InpRiskPct, 2) + "% a trade, strategies" +
            (InpNyOrb ? " NY_ORB" : "") + (InpAsian ? " ASIAN_NARROW" : "") + (InpDualThrust ? " DUAL_THRUST" : "") +
            (InpRBreaker ? " R_BREAKER" : "") + (InpMom16 ? " MOM_16" : "") + (InpMom20 ? " MOM_20" : "") +
+           ", weights " + DoubleToString(InpWNyOrb, 2) + "/" + DoubleToString(InpWAsian, 2) + "/" + DoubleToString(InpWDualThrust, 2) + "/" +
+           DoubleToString(InpWRBreaker, 2) + "/" + DoubleToString(InpWMom16, 2) + "/" + DoubleToString(InpWMom20, 2) +
            ", demo account " + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)));
    return INIT_SUCCEEDED;
   }

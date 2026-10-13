@@ -24,7 +24,7 @@ function findJournal() {
     fs.readdirSync(d, { withFileTypes: true }).forEach(e => {
       const p = path.join(d, e.name);
       if (e.isDirectory()) walk(p, depth + 1);
-      else if (e.name === 'GoldIntraday_journal.csv') hits.push({ p, t: fs.statSync(p).mtimeMs });
+      else if (/^GoldIntraday_journal.*\.csv$/.test(e.name)) hits.push({ p, t: fs.statSync(p).mtimeMs });   // tester: one per run
     });
   };
   walk(root, 0);

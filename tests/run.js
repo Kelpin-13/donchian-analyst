@@ -319,8 +319,10 @@ const cards = stratRows.filter(r => r && /^  \d+   /.test(String(r[0]))).length;
 ok(glanceRow('New York opening range')[2] === '22:00–01:00' && glanceRow('Momentum at 16:00')[2] === '21:00',
    'strategy times shown in the owner\'s clock (broker 17:00-20:00 → 22:00–01:00 at UTC+8)');
 ok(cards === 7 && stratRows.some(r => r && /closed by 04:00 \(broker 23:00\)/.test(String(r[1]))), 'one card per strategy (7), with both clocks in the details');
-ok(M.run('MT5_STRATEGIES').every(st => st.name && st.idea && st.entry && st.stop && st.exit && st.trades > 0 && st.years.length === 4),
-   'every strategy is fully described, with its backtest record');
+ok(M.run('MT5_STRATEGIES').every(st => st.name && st.idea && st.entry && st.stop && st.exit && st.trades > 0 && st.eras.length === 3),
+   'every strategy is fully described, with its 18-year record in three eras');
+ok(glanceRow('New York opening range')[4] === '0.125%' && glanceRow('Dual Thrust')[6] === 93 && glanceRow('Dual Thrust')[7] === '3 of 3',
+   'at a glance: half risk where it applies, 18-year result and eras positive');
 
 section('Switching the old system off');
 const O2 = world({ markets: MARKETS, props: { MT5_KEY: 'mk' }, triggers: ['runMonitor', 'runChallenger', 'runDailyBrief'] });

@@ -19,12 +19,14 @@ const MT5_EAS = {
   DonchianGold: { label: 'H4 swing EA (DonchianGold)', strategyColumn: false },
   GoldIntraday: { label: 'Intraday EA (GoldIntraday)', strategyColumn: true }
 };
-// What each strategy does, and what 3.75 years of the broker's gold data says (research/, real costs,
-// Jan 2023 - Oct 2026; years = R per year 2023/2024/2025/2026). Must describe what the EAs actually do.
+// What each strategy does, and what 18 years of the broker's gold data says: MT5 Strategy Tester runs of the
+// EAs over 2008-2014, 2015-2022 and 2023-Oct 2026 (research/journal_stats.js). eras = total R per era;
+// trades / perWeek / avgR = all 18 years. Must describe what the EAs actually do.
 // {HH:MM} and {HH:MM-HH:MM} are broker times; the Strategies tab shows them in the owner's clock.
+const MT5_ERAS = ['2008–14 (crash, rally, bear market)', '2015–22 (quiet years)', '2023–26 (boom)'];
 const MT5_STRATEGIES = [
-  { id: 'H4', ea: 'DonchianGold', chart: 'H4', name: 'H4 swing breakout', risk: 1, perWeek: 0.74, avgR: 0.29,
-    trades: 146, win: 39, pf: 1.56, ddR: 12.3, years: [3, 12, 14, 14],
+  { id: 'H4', ea: 'DonchianGold', chart: 'H4', name: 'H4 swing breakout', risk: 1, perWeek: 0.78, avgR: 0.185,
+    trades: 765, eras: [55.1, 43.4, 42.9],
     how: '20-bar breakout on 4-hour bars, with the trend; holds for days',
     glance: 'Any time; checks every 4 hours', direction: 'Buy or sell, with the trend',
     idea: 'Gold trends. A close at a new 20-bar high or low on the 4-hour chart often starts a move that lasts for days.',
@@ -34,8 +36,8 @@ const MT5_STRATEGIES = [
     stop: '2 × ATR(14) from the entry, judged on each bar\'s close, plus a safety stop at the broker 4 × ATR away in case of a sudden crash.',
     exit: 'The stop; a close back through the 10-bar channel (the trend has ended); or after 60 bars (about 10 trading days).',
     note: 'It holds overnight, so it pays (or earns) the broker\'s daily swap.' },
-  { id: 'NY_ORB', ea: 'GoldIntraday', chart: 'M15', name: 'New York opening range', risk: 0.25, perWeek: 3.3, avgR: 0.062,
-    trades: 645, win: 44, pf: 1.13, ddR: 25.2, years: [32, -3, 26, -16],
+  { id: 'NY_ORB', ea: 'GoldIntraday', chart: 'M15', name: 'New York opening range', risk: 0.125, perWeek: 3.25, avgR: 0.044,
+    trades: 3186, eras: [118.1, -38.2, 60.8],
     how: 'Breakout of the first half hour of New York trading, with the H4 trend',
     glance: '{17:00-20:00}', direction: 'The H4 trend\'s side only',
     idea: 'The first half hour of New York stock trading often sets gold\'s direction for the rest of the session.',
@@ -43,9 +45,9 @@ const MT5_STRATEGIES = [
     entry: 'In an uptrend a buy-stop order waits at the high of {16:30-17:00}; in a downtrend a sell-stop order waits at its low. One trade a day.',
     stop: 'The other side of that half-hour range.',
     exit: 'The stop, or closed at {23:00}.',
-    note: 'Its order rests on the broker\'s server, so it fills without your laptop\'s network delay.' },
-  { id: 'ASIAN_NARROW', ea: 'GoldIntraday', chart: 'M15', name: 'Asian range breakout', risk: 0.25, perWeek: 1.7, avgR: 0.047,
-    trades: 331, win: 38, pf: 1.08, ddR: 29.7, years: [1, 20, -12, 7],
+    note: 'Strong when gold moves hard (2008-14, 2023-26) but lost through the quiet years 2015-22, so it trades at half risk.' },
+  { id: 'ASIAN_NARROW', ea: 'GoldIntraday', chart: 'M15', name: 'Asian range breakout', risk: 0.25, perWeek: 1.83, avgR: 0.040,
+    trades: 1797, eras: [16.1, 36.8, 19.8],
     how: 'Breakout of a quiet Asian session (01:00-09:00 server time)',
     glance: '{09:00-15:00}, quiet nights only', direction: 'Whichever side breaks first',
     idea: 'When the Asian session is unusually quiet, the European open often breaks out of it hard (Toby Crabel\'s narrow-range rule).',
@@ -55,8 +57,8 @@ const MT5_STRATEGIES = [
     stop: 'The other side of the Asian range.',
     exit: 'The stop, or closed at {23:00}.',
     note: 'About one night in two counts as quiet, so it trades a couple of times a week.' },
-  { id: 'DUAL_THRUST', ea: 'GoldIntraday', chart: 'M15', name: 'Dual Thrust', risk: 0.25, perWeek: 1.6, avgR: 0.039,
-    trades: 322, win: 55, pf: 1.32, ddR: 7.7, years: [-2, 5, 6, 4],
+  { id: 'DUAL_THRUST', ea: 'GoldIntraday', chart: 'M15', name: 'Dual Thrust', risk: 0.25, perWeek: 1.86, avgR: 0.051,
+    trades: 1823, eras: [64.9, 13.8, 14.2],
     how: "Breakout of the day's open +/- half the 4-day range; flips on its stop",
     glance: '{01:00-20:00}', direction: 'Both; flips when stopped',
     idea: 'A classic day-trading system (Michael Chalek): a move of half the recent daily range away from the open is a real breakout.',
@@ -66,8 +68,8 @@ const MT5_STRATEGIES = [
     stop: 'The opposite trigger. When it is hit, the trade turns around into the other direction (stop-and-reverse), up to 3 trades a day.',
     exit: 'The stop-and-reverse, or closed at {23:00}.',
     note: 'Its stop is wide, so its trades are small; on very wild days even the broker\'s smallest size (0.001 lots) would risk too much, and it sits out.' },
-  { id: 'R_BREAKER', ea: 'GoldIntraday', chart: 'M15', name: 'R-Breaker', risk: 0.25, perWeek: 0.5, avgR: 0.136,
-    trades: 101, win: 60, pf: 1.55, ddR: 4.7, years: [1, 3, 6, 4],
+  { id: 'R_BREAKER', ea: 'GoldIntraday', chart: 'M15', name: 'R-Breaker', risk: 0.25, perWeek: 0.92, avgR: 0.059,
+    trades: 907, eras: [39.0, 0.7, 13.5],
     how: "Breakouts and reversals at levels from yesterday's prices, with the H4 trend",
     glance: 'Every 15 min until {20:00}', direction: 'Buy or sell, with the H4 trend',
     idea: 'Pivot levels from yesterday\'s high, low and close (Richard Saidenberg): follow strong breakouts, and catch moves that fail at the day\'s extremes.',
@@ -76,9 +78,9 @@ const MT5_STRATEGIES = [
            '"setup" level and climbs back over the "reversal" level. SELL is the mirror image. Up to 2 trades a day.',
     stop: '0.5 × the daily ATR from the entry.',
     exit: 'The stop; a reversal signal against it; or closed at {23:00}.',
-    note: 'It trades rarely (about once in two weeks) but has the best record per trade.' },
-  { id: 'MOM_16', ea: 'GoldIntraday', chart: 'M15', name: 'Momentum at 16:00', risk: 0.25, perWeek: 2.8, avgR: 0.073,
-    trades: 542, win: 54, pf: 1.26, ddR: 8.1, years: [0, 22, 10, 7],
+    note: 'Best in lively markets; about break-even through the quiet years 2015-22.' },
+  { id: 'MOM_16', ea: 'GoldIntraday', chart: 'M15', name: 'Momentum at 16:00', risk: 0.125, perWeek: 2.70, avgR: 0.027,
+    trades: 2651, eras: [47.3, -17.2, 41.9],
     how: "Joins the day's direction at 16:00 server time, with the H4 trend",
     glance: '{16:00}', direction: 'Buy or sell, with the H4 trend',
     idea: 'Intraday momentum (Gao, Han, Li & Zhou, 2018): the way gold has moved since the day\'s open tends to carry on into the US afternoon.',
@@ -86,9 +88,9 @@ const MT5_STRATEGIES = [
     entry: 'At {16:00}: if gold is above the day\'s opening price it BUYS, if below it SELLS, but only when that agrees with the H4 trend.',
     stop: '0.5 × the daily ATR from the entry.',
     exit: 'The stop, or closed at {23:00}.',
-    note: 'The only strategy that passed every test on its own.' },
-  { id: 'MOM_20', ea: 'GoldIntraday', chart: 'M15', name: 'Momentum at 20:00', risk: 0.25, perWeek: 2.9, avgR: 0.025,
-    trades: 562, win: 49, pf: 1.20, ddR: 7.2, years: [5, 0, 4, 6],
+    note: 'Strong when gold trends (2008-14, 2023-26) but lost through the quiet years 2015-22, so it trades at half risk.' },
+  { id: 'MOM_20', ea: 'GoldIntraday', chart: 'M15', name: 'Momentum at 20:00', risk: 0.25, perWeek: 2.90, avgR: 0.015,
+    trades: 2842, eras: [18.5, 5.1, 18.2],
     how: "Joins the day's direction at 20:00 server time, with the H4 trend",
     glance: '{20:00}', direction: 'Buy or sell, with the H4 trend',
     idea: 'The same intraday momentum idea, later in the day: the day\'s direction so far tends to carry on into the close.',
@@ -96,14 +98,14 @@ const MT5_STRATEGIES = [
     entry: 'At {20:00}: if gold is above the day\'s opening price it BUYS, if below it SELLS, but only when that agrees with the H4 trend.',
     stop: '0.5 × the daily ATR from the entry.',
     exit: 'The stop, or closed at {23:00}.',
-    note: 'Small but steady: positive in every year tested.' }
+    note: 'Small but positive in every era tested.' }
 ];
 const MT5_RULES = [
   'Demo account only: both EAs refuse to run on a real-money account.',
   'Gold only (XAUUSD.sml): both EAs refuse any other chart.',
   'Every order has its stop loss at the broker from the moment it opens.',
   'One position per strategy at a time. No adding to losing trades, no martingale, no doubling up.',
-  'Risk per trade: 0.25% of the account for the six intraday strategies, 1% for the H4 swing breakout.',
+  'Risk per trade: 0.25% of the account for each intraday strategy (half that, 0.125%, for New York opening range and Momentum at 16:00), 1% for the H4 swing breakout.',
   'Every intraday trade is closed by {23:00}, before the daily rollover, so intraday trades pay no overnight swap.',
   'No new intraday trades after the account falls 2% in one day.',
   'Emergency stop for both EAs: in MT5 press F3 → Add → name DG_KILL, value 1. They close everything and stop trading.',
@@ -386,7 +388,7 @@ function mt5WriteSummary_(log, trades, open) {
     const ts = trades.filter(t => t.strat === st.id);
     const w = ts.filter(t => (t.pnl !== null ? t.pnl : t.r || 0) > 0).length;
     const r = ts.reduce((a, t) => a + (t.r || 0), 0), p = ts.reduce((a, t) => a + (t.pnl || 0), 0);
-    rows.push([st.name + (st.risk === 1 ? '  (1% risk)' : ''), ts.length, st.how, ts.length ? w / ts.length : '', Math.round(r * 100) / 100,
+    rows.push([st.name + (st.risk === 1 ? '  (1% risk)' : st.risk < 0.25 ? '  (half risk)' : ''), ts.length, st.how, ts.length ? w / ts.length : '', Math.round(r * 100) / 100,
                ts.length ? Math.round(r / ts.length * 1000) / 1000 : '', st.avgR, Math.round(p * 100) / 100, Math.round(st.perWeek * weeks * 10) / 10]);
   });
   const allR = trades.reduce((a, t) => a + (t.r || 0), 0);
@@ -450,8 +452,8 @@ function mt5WriteSummary_(log, trades, open) {
   section(h0, 'HOW TO READ THIS');
   const notes = [
     'R = the result in units of the risk taken. +1 R means the trade made what it risked; -1 R means its stop loss was hit.',
-    'Each intraday trade risks 0.25% of the account (about $25); each H4 trade risks 1% (about $100).',
-    '"Backtest average" is what 3.75 years of the broker\'s gold data says each strategy earns per trade on average.',
+    'Intraday trades risk 0.25% of the account (about $25), New York opening range and Momentum at 16:00 half that; H4 trades risk 1% (about $100).',
+    '"Backtest average" is what 18 years of the broker\'s gold data (2008-2026) says each strategy earns per trade on average.',
     'A few weeks of trades swing far around that average: this period shows the EAs run by the rules; the backtest is the evidence of profit.',
     'Slippage (MT5 Trades tab) = how much worse than the planned level a stop order filled, in dollars per ounce.',
     'Times are your clock. "Server time" in MT5 Log is the broker\'s clock (5 hours behind yours until 1 Nov, then 6).'
@@ -536,7 +538,7 @@ function mt5Times_(text, shift, withBroker) {
  * when asked or when the clocks change (it shows times in the owner's clock).
  */
 function mt5WriteStrategies_(force) {
-  const shift = mt5ClockShift_(), stamp = 'v1|' + shift;
+  const shift = mt5ClockShift_(), stamp = 'v2|' + shift;
   const props = PropertiesService.getScriptProperties(), ss = ss_();
   let s = ss.getSheetByName(MT5_STRATEGIES_SHEET);
   if (s && !force && props.getProperty('MT5_STRAT_DONE') === stamp) return;
@@ -563,9 +565,10 @@ function mt5WriteStrategies_(force) {
 
   // At a glance
   section(4, 'AT A GLANCE');
-  const glance = [['Strategy', 'Expert Advisor', 'When (your time)', 'Direction', 'Risk', 'Trades a week', 'Win rate', 'Profit factor']];
+  const glance = [['Strategy', 'Expert Advisor', 'When (your time)', 'Direction', 'Risk', 'Trades a week', '18-year result', 'Eras it made money']];
   MT5_STRATEGIES.forEach(st => glance.push([st.name, st.ea + '  ·  ' + st.chart, T(st.glance, false), st.direction, st.risk + '%',
-                                            st.perWeek, st.win / 100, st.pf]));
+                                            st.perWeek, Math.round(st.eras.reduce((a, b) => a + b, 0)),
+                                            st.eras.filter(r => r > 0).length + ' of ' + st.eras.length]));
   const ng = glance.length - 1;
   s.getRange(5, 1, glance.length, W).setValues(glance);
   s.getRange(5, 1, 1, W).setFontWeight('bold').setBackground(MT5_STYLE.sub).setHorizontalAlignment('center').setWrap(true);
@@ -576,8 +579,8 @@ function mt5WriteStrategies_(force) {
     .setHorizontalAlignments(glance.slice(1).map(() => ['left', 'left', 'left', 'left', 'center', 'center', 'center', 'center']));
   s.getRange(6, 1, ng, 1).setFontWeight('bold');
   s.getRange(6, 6, ng, 1).setNumberFormat('0.0');
-  s.getRange(6, 7, ng, 1).setNumberFormat('0%');
-  s.getRange(6, 8, ng, 1).setNumberFormat('0.00');
+  s.getRange(6, 7, ng, 1).setNumberFormat('+0" R";-0" R";0" R"').setFontWeight('bold')
+    .setFontColors(glance.slice(1).map(r => [MT5_COLOUR(r[6])]));
   let r = 6 + ng;
   s.setRowHeight(r++, 14);
 
@@ -603,9 +606,10 @@ function mt5WriteStrategies_(force) {
       ['Stop loss', st.stop],
       ['How it exits', T(st.exit, true)],
       ['Risk per trade', st.risk + '% of the account (about $' + Math.round(st.risk * 100) + ' on $10,000)'],
-      ['Backtest', st.trades + ' trades over 3.75 years (' + st.perWeek + ' a week)  ·  ' + st.win + '% winners  ·  profit factor ' +
-                   st.pf.toFixed(2) + '  ·  ' + (st.avgR >= 0 ? '+' : '−') + Math.abs(st.avgR) + ' R per trade  ·  worst drawdown ' + st.ddR + ' R'],
-      ['Year by year', ['2023', '2024', '2025', '2026 (to Oct)'].map((y, j) => y + ':  ' + signedR(st.years[j])).join('      ')],
+      ['Backtest, 18 years', st.trades + ' trades from 2008 to 2026 (' + st.perWeek + ' a week)  ·  ' +
+                             signedR(Math.round(st.eras.reduce((a, b) => a + b, 0))) + ' in total  ·  ' +
+                             (st.avgR >= 0 ? '+' : '−') + Math.abs(st.avgR) + ' R per trade on average'],
+      ['By era', MT5_ERAS.map((e, j) => e + ':  ' + signedR(Math.round(st.eras[j]))).join('      ')],
       ['Good to know', st.note]
     ];
     lines.forEach(([label, text], j) => {
