@@ -203,7 +203,7 @@ ok(threw === 'Locked', 'the wrong dashboard key is refused');
 /* ---------------------------------------------------------------- */
 section('Web app links');
 const L = world({ markets: MARKETS });
-const dev = 'https://script.google.com/macros/s/AKfycbxHgYce_x-1/dev';
+const dev = 'https://script.google.com/macros/s/AKfycbTEST_x-1/dev';
 const link = v => { L.props.DASHBOARD_URL = v; return L.run('webAppUrl_("DASHBOARD_URL")'); };
 ok(link(dev + '?k=secret').url === dev, 'strips ?k= from a pasted link');
 ok(link('https://script.google.com/a/macros/example.com/s/AKfy_1/exec').url, 'accepts Workspace links');
@@ -336,6 +336,19 @@ ok(JSON.stringify(visible) === JSON.stringify(['MT5 Strategies', 'MT5 Summary', 
 ok(O2.run("post0 = doPost({ postData: { contents: JSON.stringify({ source: 'mt5', key: 'mk', ea: 'GoldIntraday', from: 1, offset: 10800, " +
           "lines: ['2026.10.12 15:01:06,ALL,START,10000.00,XAUUSD.sml'] }) } }).getContent()") === 'stored 1',
    'with the old system off, the MT5 receiver still stores what the EAs send');
+
+section('Web app: Telegram messages');
+const T = world({ markets: MARKETS });
+const tg = (chat, text) => T.run('doPost(' + JSON.stringify({ postData: { contents: JSON.stringify(
+  { update_id: Math.floor(Math.random() * 1e9), message: { text, chat: chat === undefined ? undefined : { id: chat } } }) } }) + ').getContent()');
+tg('', 'forged, empty chat');
+tg(undefined, 'forged, no chat');
+ok(!T.props.TG_QUEUE, 'Telegram off (no chat ID set): forged updates, even with an empty chat ID, are ignored');
+T.run('CONFIG.ALERTS.telegramChatId = "42"');
+tg(43, 'a stranger');
+ok(!T.props.TG_QUEUE, 'with a chat ID set, other chats are ignored');
+tg(42, 'status please');
+ok(/status please/.test(T.props.TG_QUEUE || ''), 'the owner\'s chat is queued for an answer');
 
 /* ---------------------------------------------------------------- */
 const ai = process.argv.indexOf('--against');

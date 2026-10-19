@@ -3,8 +3,7 @@
 Read this before changing the strategy, backtester, lab, agent or panel. Every
 number below matches `Config.js` at the time of writing; if you change one, update it here.
 
-The full human-facing guide (install steps and click-by-click walkthroughs) lives at
-https://claude.ai/code/artifact/384d8bf0-0342-4cd2-b8be-8608a6b7b41a — this file is the
+Install steps and day-to-day running are in `docs/OPERATIONS.md`; this file is the
 distilled version for working on the code.
 
 ---
