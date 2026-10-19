@@ -20,6 +20,7 @@
 const fs = require('fs');
 const path = require('path');
 const { testerJournals, readRun, stats, money, f } = require('./journal_stats');
+const { findCalendar, loadReleases, firstFrom: firstFromSorted } = require('./calendar');
 
 const MIN = 60000, BAR = 15 * MIN, DAY = 86400000;
 
@@ -28,57 +29,13 @@ const opt = (name, def) => { const i = args.indexOf(name); return i === -1 ? def
 const BEFORE = Number(opt('--before', 30)) * MIN, AFTER = Number(opt('--after', 30)) * MIN;
 const given = args.filter((a, i) => !a.startsWith('--') && !(i > 0 && args[i - 1].startsWith('--')));
 
-function findCalendar() {
-  const local = path.join(__dirname, '..', 'data', 'calendar_events.csv');
-  if (fs.existsSync(local)) return local;
-  const root = path.join(process.env.APPDATA || '', 'MetaQuotes', 'Terminal');
-  if (!fs.existsSync(root)) return null;
-  const hits = fs.readdirSync(root).map(d => path.join(root, d, 'MQL5', 'Files', 'calendar_events.csv')).filter(p => fs.existsSync(p));
-  hits.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
-  return hits[0] || null;
-}
-
 const calFile = opt('--calendar', null) || findCalendar();
 if (!calFile) { console.log('No calendar_events.csv found. Run mt5/ExportCalendar.mq5 in MT5 first.'); process.exit(1); }
-const parseT = s => Date.parse(s.trim().replace(/\./g, '-').replace(' ', 'T') + 'Z');
-const events = fs.readFileSync(calFile, 'latin1').trim().split(/\r?\n/).slice(1).map(l => {
-  const p = l.split(',');
-  return { t: parseT(p[0]), country: p[1], importance: p[3], mode: p[4], name: p[7] };
-}).filter(e => e.t > 0);
-
-// US daylight saving (rules since 2007): second Sunday of March to first Sunday of November.
-function usDst(ms) {
-  const y = new Date(ms).getUTCFullYear();
-  const sunday = (m, n) => { const first = new Date(Date.UTC(y, m, 1)).getUTCDay(); return Date.UTC(y, m, 1 + (7 - first) % 7 + 7 * (n - 1)); };
-  return ms >= sunday(2, 2) && ms < sunday(10, 1);
-}
-
-// Time check: US jobs data comes out at 8:30 New York = 15:30 server. If the calendar's clock differs
-// (say, one fixed offset for all history), shift every event by the usual difference, summer and winter apart.
-const minuteOf = ms => ((ms % DAY) + DAY) % DAY / MIN;
-const nfp = events.filter(e => e.country === 'US' && e.mode === 'time' && /nonfarm payrolls/i.test(e.name) && !/private|adp/i.test(e.name));
-const shift = {};
-[true, false].forEach(summer => {
-  const counts = {};
-  nfp.filter(e => usDst(e.t) === summer).forEach(e => { const d = minuteOf(e.t) - (15 * 60 + 30); counts[d] = (counts[d] || 0) + 1; });
-  const best = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0];
-  const n = Object.values(counts).reduce((a, b) => a + b, 0);
-  shift[summer] = { min: best === undefined ? 0 : Number(best), agree: best === undefined ? 0 : counts[best], n };
-});
-const TOP = 'Nonfarm Payrolls|CPI m/m|Fed Interest Rate Decision|FOMC Press Conference';
-const only = opt('--only', null), onlyRe = only ? new RegExp('^(' + (only === 'top' ? TOP : only) + ')$', 'i') : null;
-const releases = events.filter(e => e.country === 'US' && e.importance === 'high' && e.mode === 'time' && (!onlyRe || onlyRe.test(e.name)))
-  .map(e => ({ t: e.t - shift[usDst(e.t)].min * MIN, name: e.name }))
-  .sort((a, b) => a.t - b.t);
-const relTimes = releases.map(e => e.t);
+const cal = loadReleases(calFile, opt('--only', null));
+const { shift, onlyRe, releases } = cal, relTimes = cal.times;
 const newsDays = new Set(relTimes.map(t => Math.floor(t / DAY)));
-
-// First release at or after t (binary search).
-function firstFrom(t) {
-  let lo = 0, hi = relTimes.length;
-  while (lo < hi) { const mid = (lo + hi) >> 1; if (relTimes[mid] < t) lo = mid + 1; else hi = mid; }
-  return lo;
-}
+const firstFrom = t => firstFromSorted(relTimes, t);
+const parseT = s => Date.parse(s.trim().replace(/\./g, '-').replace(' ', 'T') + 'Z');
 function tag(tr, before, after) {
   const i = firstFrom(tr.t - after);
   if (i < relTimes.length && relTimes[i] <= tr.t + before) return 'near';
@@ -111,7 +68,7 @@ const pad = (s, n) => String(s).padStart(n);
 const range = ms => new Date(ms).toISOString().slice(0, 10);
 
 console.log('News windows: GoldIntraday tester runs vs the economic calendar');
-console.log('Calendar: ' + calFile + ' (' + events.length + ' events)');
+console.log('Calendar: ' + calFile + ' (' + cal.events + ' events)');
 console.log('US high-importance releases with a set time' + (onlyRe ? ', only ' + onlyRe.source.slice(2, -2) : '') + ': ' + releases.length + ', ' + range(relTimes[0]) + ' to ' + range(relTimes[relTimes.length - 1]));
 ['summer', 'winter'].forEach((s, i) => {
   const x = shift[i === 0];
