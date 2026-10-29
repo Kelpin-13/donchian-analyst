@@ -410,7 +410,7 @@ function handleTelegram_(update) {
   if (!msg || !msg.text) return;
 
   // No chat ID configured means Telegram is off: answer nobody (a forged update could carry an empty ID).
-  const owner = String(CONFIG.ALERTS.telegramChatId || '');
+  const owner = telegramChatId_();
   const from = msg.chat && msg.chat.id !== undefined && msg.chat.id !== null ? String(msg.chat.id) : '';
   if (!owner || from !== owner) {
     logLine_('WARN', 'Ignored Telegram message from chat ' + (from || '(none)').slice(0, 40));

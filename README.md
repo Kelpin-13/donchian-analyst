@@ -164,6 +164,7 @@ kept in `research/`.
 | Avoiding big US news (jobs report, CPI, Fed decisions) | Made results slightly worse. Many of the best breakouts start with news, and closing trades before news cut profits sharply. |
 | A machine-learning filter (LightGBM) to skip weak setups | Helped in the quiet years but threw away winners in the bull market. It failed the test it was given in advance. |
 | Microsoft's Qlib platform | Built for ranking many stocks against each other, buy-only, with no link to MetaTrader. Not a fit for timing one market. |
+| Supply and demand zones (classic zones, order blocks, fair value gaps; 77 versions from public sources) | No version passed. The best one in 2023-24 (4-hour order blocks with the trend) broke even in 2025-26. The zones are still sent as a map in the morning message, labelled as not having passed. |
 
 ## Safety rules
 
@@ -188,6 +189,7 @@ Both robots enforce these in code:
 | [`mt5/SheetSync.mqh`](mt5/SheetSync.mqh) | Shared by both robots: sends journal lines to the Google Sheet |
 | [`mt5/ExportCalendar.mq5`](mt5/ExportCalendar.mq5) | Script that exports MetaTrader's economic calendar for the news research |
 | [`Mt5.js`](Mt5.js), [`Webhook.js`](Webhook.js) | Apps Script: receives the journals and builds the Sheet's results book |
+| [`Morning.js`](Morning.js) | Apps Script: the 07:30 gold morning map on Telegram (4-hour zones, the trend, the EAs' levels for the day, an alert if MT5 is offline) |
 | Other `*.js` / `*.html` files | The project's original Apps Script system: a backtester, paper trading, a research lab and a Claude-powered analyst. It came first, on Bitcoin, and is now switched off; the code is kept. |
 | [`research/`](research/) | Strategy research, parity checks, 18-year tester analysis, the news study and the machine-learning study (Node.js and Python) |
 | [`tests/`](tests/) | Offline tests for the Apps Script code |

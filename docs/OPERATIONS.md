@@ -14,8 +14,10 @@ column, property or trigger — other code (and the web panel) reads them by nam
 | `runLab` | 02:00 | runs QUEUED experiments within a 4.5-min budget |
 | `runChallenger` | every 15 min | challenger: each market acts once per closed `CHALLENGER.intervalMinutes` candle; skips without fetching otherwise; gold backs off 30 min when no new bar (weekends); stops after 4 min and catches up next run |
 | `processTelegramQueue` | one-off, ~1s after a Telegram message | answers queued questions |
+| `runMorningMap` | daily 07:30 (script time zone) | the gold morning map to the owner's Telegram; silent when the newest hourly bar is over 2 h old (weekends, holidays). Installed by **Morning map: connect Telegram**, not by `setup()` |
 
-`setup()` deletes **all** triggers first, then installs these. Re-run it after adding a job.
+`setup()` deletes **all** triggers first (except `runMorningMap`), then installs these. Re-run it after adding a job.
+`oldSystemOff()` also leaves `runMorningMap` alone.
 
 ## Sheets
 
@@ -58,7 +60,8 @@ columns at the end is safe.
 | `ANTHROPIC_API_KEY` | secret | owner |
 | `DASHBOARD_KEY` | secret | owner |
 | `TV_WEBHOOK_SECRET` | secret, optional | owner |
-| `TELEGRAM_BOT_TOKEN` | secret, optional | owner |
+| `TELEGRAM_BOT_TOKEN` | secret, optional — the bot from @BotFather (morning map, alerts, agent chat) | owner |
+| `TELEGRAM_CHAT_ID` | the owner's Telegram chat; read by `telegramChatId_()` before `CONFIG.ALERTS.telegramChatId`, so it stays out of the code | Morning map: connect Telegram |
 | `DASHBOARD_URL` | web app link ending `/dev` (daily panel) — used by Show dashboard URL and Check installation | owner |
 | `WEBHOOK_URL` | web app link ending `/exec` (TradingView/Telegram, and the MT5 EAs' results) | owner |
 | `MT5_KEY` | secret — the key both EAs send with their journals; created by MT5 gold EAs → Connect MT5 | menu |
@@ -89,10 +92,10 @@ Carlo, TV compare, live decay, full automatic run ·
 **Lab**: add starters, run now, ask Claude, promote (holdout), show live, revert ·
 **Live**: check now, daily brief, grade, ask the agent, paper account, AI gate report, challenger vs current, challenger: backtest each market, challenger: walk-forward test, dashboard URL ·
 **TradingView**: test webhook · **MT5 gold EAs**: connect MT5 (link + key), rebuild the MT5 Summary,
-switch off the old system · Show scorecard · **Reset**: position state, paper account, challenger.
+morning map (connect Telegram, send now, stop), switch off the old system · Show scorecard · **Reset**: position state, paper account, challenger.
 
-With `OLD_SYSTEM_OFF` set the menu is only: Connect MT5 · Rebuild the MT5 Summary now · Check installation ·
-Turn the old system back on.
+With `OLD_SYSTEM_OFF` set the menu is only: Connect MT5 · Rebuild the MT5 Summary now · Morning map: connect Telegram ·
+Morning map: send now · Morning map: stop · Check installation · Turn the old system back on.
 
 `checkInstall()` / `installChecks_(skipApi)` detect stale files by looking for a function
 that exists only in the current version of each file. When adding a file or a
@@ -103,7 +106,7 @@ version-defining function, add a check there.
 - Code reaches Apps Script via `clasp push` from this folder (master copy).
 - Triggers and menu run the latest **saved/pushed** code immediately.
 - Panel for daily use: the `/dev` test-deployment URL + `?k=DASHBOARD_KEY` (owner login only).
-- Twelve Data budget (free: 800 requests/day, 8/minute): challenger ~6/day per market, the panel's
+- Twelve Data budget (free: 800 requests/day, 8/minute): the morning map 1/day, challenger ~6/day per market, the panel's
   gold view up to ~300/day if left open, `challengerBacktest` 1 per market. Watch the Log for
   `Twelve Data 429` if more markets are switched on.
 - Links come from the `DASHBOARD_URL` / `WEBHOOK_URL` Script Properties, not

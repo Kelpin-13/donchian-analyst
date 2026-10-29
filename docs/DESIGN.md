@@ -285,3 +285,38 @@ its row in MM_Backtest has been reviewed — the rules were built and tested on 
 
 Switching live to multi-market is the owner's call, after the comparison and a review of
 MM_Backtest — and it would need multi-symbol state in the live monitor, journal and Pine charts.
+
+## 15. Morning map (`Morning.js`) — zones as a map, not signals
+
+The owner asked (30 Oct 2026) for a daily phone message with supply and demand zones from a higher timeframe
+and "high-probability" entries on a lower one. What was built, and why it looks the way it does:
+
+- **The evidence first.** `research/supply_demand.js` (classic base zones on M15/H1, settled on M1 data) and
+  `research/sd_lab.js` (69 versions collected from public sources: classic base zones on H1/H4, smart-money
+  order blocks on H1/H4, fair value gaps on M15/H1; limit, rejection-candle and change-of-character entries;
+  with and without the H4 trend; session, displacement, structure-trend and liquidity-sweep variants) found
+  no supply-and-demand entry that passes the project's test. The only design-half candidate (H4 order blocks,
+  limit at the block, with the H4 trend: 2023-24 PF 1.58, +27R) made -1R on 2025-26 (PF 0.99). Fair value
+  gap limit entries lose heavily: tiny stops are eaten by the spread. So the message never calls a zone a
+  signal or "high probability"; it says so in the text.
+- **What it sends** (07:30 script time, Monday-Friday, only while gold trades): the 4-hour trend (EMA 100 of
+  the broker's 4-hour bars), the nearest standing 4-hour order blocks (up to 3 above and 3 below, fresh or
+  tested), the levels the EAs actually trade today (Dual Thrust from the intraday EA's DAY line in MT5 Log;
+  the H4 EA's 20-bar breakout levels, computed from the same bars), the day's strategy times in the owner's
+  clock, and a warning when an EA has not been heard from for an hour.
+- **Order blocks** were chosen for the map because they are the standard definition in public tools
+  (LuxAlgo / smart-money concepts), so the owner sees the same kind of zone on TradingView, and their record
+  was the least bad. The rule is `orderBlocks()` in `research/sd_lab.js`; `morningOrderBlocks_()` must find
+  the same zones (tests/run.js checks). A zone dies when a 4-hour bar closes beyond its far edge.
+- **Bars match the broker:** Twelve Data's hourly XAU/USD is grouped into 4-hour bars on the broker's clock
+  (New York + 7 h; UTC+3 in US summer time, UTC+2 otherwise), the same boundaries as MT5 and TradingView.
+  Prices differ from the broker's by cents to about a dollar. Twelve Data also sends flat hourly bars while
+  gold is shut (seen in the first live picture: flat weekend stretches, and an EMA 100 of 4078.8 against the
+  broker's ~4102); `morningTrading_()` keeps only Monday 01:00 to Friday 24:00 broker time outside the
+  00:00-01:00 break, and only bars with a range. Without that the map would also go out on weekends.
+- **Picture:** Google's Charts service (a line chart of 4-hour closes with each zone's two edges). No
+  third-party chart service: nothing leaves Google and Telegram. If the picture fails the text still goes.
+- **Telegram:** the chat ID lives in Script Property `TELEGRAM_CHAT_ID` (set by Connect Telegram from the
+  bot's latest private message), not in `Config.js`, so the public repo never holds it. The agent's
+  Telegram handler and the old alerts read it through `telegramChatId_()`. Errors from the Bot API carry
+  Telegram's description, never the URL (it contains the token).

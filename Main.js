@@ -10,8 +10,8 @@
 function setup() {
   ensureSheets_();
 
-  // Clear any old triggers from this project first.
-  ScriptApp.getProjectTriggers().forEach(t => ScriptApp.deleteTrigger(t));
+  // Clear any old triggers from this project first (the morning map's timer stays: Morning.gs owns it).
+  ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() !== 'runMorningMap').forEach(t => ScriptApp.deleteTrigger(t));
 
   // Monitor: every 15 min. ~96 runs/day at ~3s each = ~5 min of the 90 min quota.
   ScriptApp.newTrigger('runMonitor').timeBased().everyMinutes(15).create();
@@ -57,7 +57,7 @@ function setup() {
  * Undo: Trading Agent → Turn the old system back on.
  */
 function oldSystemOff() {
-  const triggers = ScriptApp.getProjectTriggers();
+  const triggers = ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() !== 'runMorningMap');   // not the old system
   triggers.forEach(t => ScriptApp.deleteTrigger(t));
   PropertiesService.getScriptProperties().setProperty('OLD_SYSTEM_OFF', String(Date.now()));
   const lock = LockService.getScriptLock();
@@ -230,13 +230,13 @@ function sendAlert_(text) {
     }
   }
 
-  if (CONFIG.ALERTS.telegramChatId) {
+  if (telegramChatId_()) {
     try {
       const token = secret_('TELEGRAM_BOT_TOKEN', true);
       UrlFetchApp.fetch('https://api.telegram.org/bot' + token + '/sendMessage', {
         method: 'post',
         muteHttpExceptions: true,
-        payload: { chat_id: CONFIG.ALERTS.telegramChatId, text: text }
+        payload: { chat_id: telegramChatId_(), text: text }
       });
     } catch (e) {
       logLine_('ERROR', 'telegram: ' + e.message);
@@ -251,6 +251,10 @@ function onOpen() {
     ui.createMenu('Trading Agent')
       .addItem('Connect MT5 (link + key for the EAs)', 'mt5Connect')
       .addItem('Rebuild the MT5 Summary now', 'mt5RebuildNow')
+      .addSeparator()
+      .addItem('Morning map: connect Telegram', 'telegramConnect')
+      .addItem('Morning map: send now', 'morningMapNow')
+      .addItem('Morning map: stop', 'morningMapOff')
       .addSeparator()
       .addItem('Check installation', 'checkInstall')
       .addItem('Turn the old system back on', 'oldSystemOn')
@@ -302,6 +306,10 @@ function onOpen() {
     .addSubMenu(ui.createMenu('MT5 gold EAs')
       .addItem('Connect MT5 (link + key for the EAs)', 'mt5Connect')
       .addItem('Rebuild the MT5 Summary now', 'mt5RebuildNow')
+      .addSeparator()
+      .addItem('Morning map: connect Telegram', 'telegramConnect')
+      .addItem('Morning map: send now', 'morningMapNow')
+      .addItem('Morning map: stop', 'morningMapOff')
       .addSeparator()
       .addItem('Switch off the old system (keep only MT5 results)', 'oldSystemOff'))
     .addSeparator()
@@ -454,6 +462,7 @@ function installChecks_(skipApi) {
     return eas.map(ea => ea + (st[ea] ? ' last heard ' + Utilities.formatDate(new Date(st[ea].seen), Session.getScriptTimeZone(), 'd MMM HH:mm')
                                        : ' not heard from yet')).join(', ');
   });
+  check('Morning.gs', () => need(typeof runMorningMap === 'function' && typeof telegramChatId_ === 'function', 'Morning.gs (and Config.gs)'));
   check('History.gs is current', () => need(typeof updateHistory === 'function', 'History.gs'));
   check('Config.gs is current', () => need(CONFIG.BACKTEST.minTrades !== undefined && CONFIG.LAB !== undefined, 'Config.gs'));
   check('DashboardPage.html', () => { HtmlService.createTemplateFromFile('DashboardPage'); });
@@ -471,8 +480,10 @@ function installChecks_(skipApi) {
     if (!secret_('TV_WEBHOOK_SECRET', false)) throw new Error('TRADINGVIEW.enabled is true but the secret is missing');
   });
   check('Telegram', () => {
-    if (!CONFIG.ALERTS.telegramChatId) return { todo: 'optional — alerts go by email only' };
-    if (!secret_('TELEGRAM_BOT_TOKEN', false)) throw new Error('telegramChatId is set but TELEGRAM_BOT_TOKEN is missing');
+    if (!telegramChatId_()) return { todo: 'optional — Morning map: connect Telegram' };
+    if (!secret_('TELEGRAM_BOT_TOKEN', false)) throw new Error('a Telegram chat is set but TELEGRAM_BOT_TOKEN is missing');
+    const timer = ScriptApp.getProjectTriggers().some(t => t.getHandlerFunction() === 'runMorningMap');
+    return 'connected; morning map ' + (timer ? 'on (07:30, Monday-Friday)' : 'off');
   });
   check('Email alerts', () => CONFIG.ALERTS.email ? CONFIG.ALERTS.email : { todo: 'set ALERTS.email in Config.gs to get signal emails' });
 
@@ -496,7 +507,11 @@ function installChecks_(skipApi) {
   });
   check('Triggers', () => {
     const t = ScriptApp.getProjectTriggers().map(x => x.getHandlerFunction());
-    if (secret_('OLD_SYSTEM_OFF', false)) return 'old system switched off: no timers (' + (t.length ? 'but found ' + t.join(', ') : 'none found') + ')';
+    if (secret_('OLD_SYSTEM_OFF', false)) {
+      const old = t.filter(h => h !== 'runMorningMap');
+      return 'old system switched off: ' + (old.length ? 'but its timers are still there: ' + old.join(', ') : 'no old timers') +
+             (t.length > old.length ? '; morning map timer on' : '');
+    }
     if (t.indexOf('runMonitor') === -1) return { todo: 'run setup() when you are ready to go live' };
     if (CONFIG.BACKTEST.autoEnabled && t.indexOf('runAutoBacktest') === -1) {
       return { todo: 'run setup() again to add the weekly automatic backtest' };

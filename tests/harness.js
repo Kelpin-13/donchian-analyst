@@ -2,7 +2,8 @@
  * Test harness: loads every project .js file into one sandbox (like Apps Script's
  * shared global scope) with in-memory fakes for SpreadsheetApp, PropertiesService,
  * LockService, Utilities and UrlFetchApp. UrlFetchApp answers Coinbase, Twelve Data and OANDA
- * requests from synthetic price data, so the real data adapters run too.
+ * requests from synthetic price data, so the real data adapters run too, and records Telegram calls
+ * (bot token 'tg'; getUpdates answers opts.telegramUpdates).
  * No network, no Google account. Not uploaded to Apps Script (.claspignore).
  */
 const fs = require('fs');
@@ -122,7 +123,7 @@ function world(opts) {
   const markets = o.markets;
   const { sheets, ss } = fakeSheets();
   const props = Object.assign({ ANTHROPIC_API_KEY: 'test' }, o.props || {});
-  const calls = [], callTimes = [], cacheStore = {};
+  const calls = [], callTimes = [], cacheStore = {}, telegram = [];
   const triggers = (o.triggers || []).map(h => ({ getHandlerFunction: () => h }));   // installed timers, by handler
   let now = 0;
 
@@ -187,6 +188,13 @@ function world(opts) {
           .map(x => ({ datetime: fmt(x.t), open: String(x.o), high: String(x.h), low: String(x.l), close: String(x.c) })) });
       }
     }
+    if (u.hostname === 'api.telegram.org') {                                      // Telegram Bot API, token 'tg'
+      const [, bot, method] = u.pathname.split('/');
+      if (bot !== 'bottg') return reply(401, { ok: false, error_code: 401, description: 'Unauthorized' });
+      telegram.push({ method, payload: params.payload });
+      if (method === 'getUpdates') return reply(200, { ok: true, result: o.telegramUpdates || [] });
+      return reply(200, { ok: true, result: { message_id: telegram.length } });
+    }
     if (u.hostname === 'api.anthropic.com') return reply(500, { error: 'Claude is not called in tests' });
     return reply(404, { message: 'unexpected URL in test: ' + url });
   }
@@ -208,7 +216,8 @@ function world(opts) {
     }) },
     Utilities: { formatDate: d => new Date(d).toISOString(), sleep: () => {} },
     Session: { getScriptTimeZone: () => 'Asia/Singapore' },
-    ScriptApp: { getProjectTriggers: () => triggers.slice(), deleteTrigger: t => { triggers.splice(triggers.indexOf(t), 1); } },
+    ScriptApp: { getProjectTriggers: () => triggers.slice(), deleteTrigger: t => { triggers.splice(triggers.indexOf(t), 1); },
+                 newTrigger: h => chainable({ create: () => { triggers.push({ getHandlerFunction: () => h }); } }) },
     ContentService: { createTextOutput: s => ({ getContent: () => String(s) }) },
     MailApp: { sendEmail: () => {} },
     UrlFetchApp: { fetch }
@@ -221,7 +230,7 @@ function world(opts) {
   // Claude-backed steps are replaced: tests check plumbing, not model output.
   run(`agentPreTradeNote_ = function () { return { setup: 'test', invalidation: '', watch: '', confidence: 'n/a' }; };
        if (CONFIG.GATE) CONFIG.GATE.mode = 'off';`);
-  return { ctx, run, sheets, props, calls, callTimes, triggers, setNow: t => { now = t; }, get now() { return now; } };
+  return { ctx, run, sheets, props, calls, callTimes, triggers, telegram, setNow: t => { now = t; }, get now() { return now; } };
 }
 
 module.exports = { world, makeMarkets, makeHourly, H, VALID_KEYS };

@@ -349,6 +349,79 @@ tg(43, 'a stranger');
 ok(!T.props.TG_QUEUE, 'with a chat ID set, other chats are ignored');
 tg(42, 'status please');
 ok(/status please/.test(T.props.TG_QUEUE || ''), 'the owner\'s chat is queued for an answer');
+const T2 = world({ markets: MARKETS, props: { TELEGRAM_CHAT_ID: '42' } });
+T2.run('doPost(' + JSON.stringify({ postData: { contents: JSON.stringify({ update_id: 5, message: { text: 'a stranger again', chat: { id: 43 } } }) } }) + ')');
+T2.run('doPost(' + JSON.stringify({ postData: { contents: JSON.stringify({ update_id: 6, message: { text: 'owner via property', chat: { id: 42 } } }) } }) + ')');
+ok(/owner via property/.test(T2.props.TG_QUEUE || '') && !/a stranger again/.test(T2.props.TG_QUEUE || ''),
+   'the chat ID saved by Connect Telegram (Script Property) is the owner too; other chats stay ignored');
+
+section('Morning map (Telegram)');
+const tgHello = [{ update_id: 1, message: { text: 'hi', chat: { id: 777, type: 'private', first_name: 'Owner' } } }];
+const noBot = world({ markets: MARKETS, props: KEYS });
+ok(/BotFather/.test(noBot.run('telegramConnect_().text')) && !noBot.props.TELEGRAM_CHAT_ID, 'without a bot token, Connect Telegram explains how to make one and saves nothing');
+const MM = world({ markets: MARKETS, props: Object.assign({ TELEGRAM_BOT_TOKEN: 'tg', MT5_KEY: 'mk' }, KEYS), telegramUpdates: tgHello });
+let wed = T0 + 140 * 24 * H;
+while (new Date(wed).getUTCDay() !== 3) wed += 24 * H;
+const wedMorning = wed + 23 * H + 30 * 60000;                  // Wednesday 23:30 UTC = Thursday 07:30 in Singapore
+MM.setNow(wedMorning);
+const conn = MM.run('telegramConnect_()');
+ok(conn.ok && MM.props.TELEGRAM_CHAT_ID === '777' && MM.triggers.filter(t => t.getHandlerFunction() === 'runMorningMap').length === 1 &&
+   MM.telegram.some(c => c.method === 'sendMessage' && String(c.payload.chat_id) === '777'),
+   'Connect Telegram saves the chat ID from the message the owner sent, starts the 07:30 timer and confirms in the chat');
+MM.run('telegramConnect_()');
+ok(MM.triggers.filter(t => t.getHandlerFunction() === 'runMorningMap').length === 1, 'connecting again leaves one timer, not two');
+const fmtServer = ms => new Date(ms).toISOString().slice(0, 19).replace('T', ' ').replace(/-/g, '.');
+MM.run("doPost({ postData: { contents: JSON.stringify({ source: 'mt5', key: 'mk', ea: 'GoldIntraday', from: 1, offset: 10800, equity: 10000, balance: 10000, " +
+       "lines: ['" + fmtServer(wedMorning - 60 * 60000 + 3 * H) + ",ALL,DAY,10000.00,open 4065.660, daily ATR 72.670, Dual Thrust 4019.820-4111.500, yesterday H/L/C 1/2/3'] }) } })");
+const mmBefore = MM.telegram.length;
+MM.run('runMorningMap()');
+const sent = MM.telegram.slice(mmBefore), msg = sent.filter(c => c.method === 'sendMessage')[0];
+ok(msg && String(msg.payload.chat_id) === '777' && msg.payload.parse_mode === 'HTML' && /4-hour zones/.test(msg.payload.text) && /<pre>/.test(msg.payload.text),
+   'on a weekday morning the map goes to the owner\'s chat: zones in a fixed-width block');
+ok(msg && /buy stop 4111\.50, sell stop 4019\.82/.test(msg.payload.text), 'it carries today\'s Dual Thrust levels from the intraday EA\'s DAY line');
+ok(msg && /MT5 not heard from: DonchianGold/.test(msg.payload.text) && !/GoldIntraday \(/.test(msg.payload.text),
+   'it warns when an EA has gone quiet (here the H4 EA never reported) and not about the one that just did');
+ok(msg && /not passed our backtests/.test(msg.payload.text), 'the zones are labelled as a map, not as signals');
+const zoneRows = msg ? (/<pre>([\s\S]*)<\/pre>/.exec(msg.payload.text)[1].split('\n').filter(r => /DEMAND|SUPPLY/.test(r))) : [];
+ok(zoneRows.length >= 1 && zoneRows.length <= 6 + 2, 'it lists the nearest zones only (' + zoneRows.length + ' rows)');
+ok(!rowsOf(MM, 'Log').some(r => /ERROR/.test(r[1]) && /Morning/.test(r[2])), 'no errors logged (the picture is skipped where Google Charts is missing)');
+let satDay = wed;
+while (new Date(satDay).getUTCDay() !== 6) satDay += 24 * H;
+MM.setNow(satDay + 23 * H + 30 * 60000);                          // Saturday 23:30 UTC = Sunday 07:30: gold closed
+const satBefore = MM.telegram.length;
+MM.run('runMorningMap()');
+ok(MM.telegram.length === satBefore, 'nothing is sent while gold is closed');
+// Twelve Data also sends flat bars while gold is shut: pad the feed with them, as it does.
+const padded = [];
+MARKETS['XAU/USD'].forEach((k, i, a) => {
+  padded.push(k);
+  for (let t = k.t + H; a[i + 1] && t < a[i + 1].t; t += H) padded.push({ t, o: k.c, h: k.c, l: k.c, c: k.c, v: 0 });
+});
+const MF = world({ markets: Object.assign({}, MARKETS, { 'XAU/USD': padded }), props: Object.assign({ TELEGRAM_BOT_TOKEN: 'tg', TELEGRAM_CHAT_ID: '777' }, KEYS) });
+MF.setNow(satDay + 23 * H + 30 * 60000);
+MF.run('runMorningMap()');
+ok(MF.telegram.length === 0 && padded.length > MARKETS['XAU/USD'].length, 'flat weekend bars from Twelve Data do not count as trading: Saturday stays silent');
+MF.setNow(wedMorning);
+MM.setNow(wedMorning);
+const last60 = w => JSON.stringify(JSON.parse(w.run('JSON.stringify(morningBuild_().c4.slice(-60))')).map(x => [x.b, x.o, x.h, x.l, x.c]));
+const weekendCandles = JSON.parse(MF.run('JSON.stringify(morningBuild_().c4.filter(x => [0, 6].indexOf(new Date(x.b).getUTCDay()) !== -1).length)'));
+ok(last60(MF) === last60(MM) && weekendCandles === 0, 'with the padded feed the 4-hour bars are the same as with a clean one, and none falls on a weekend');
+ok(MM.run("morningServerMs_(Date.UTC(2026, 6, 1, 12)) - Date.UTC(2026, 6, 1, 12)") === 3 * H &&
+   MM.run("morningServerMs_(Date.UTC(2026, 11, 1, 12)) - Date.UTC(2026, 11, 1, 12)") === 2 * H &&
+   MM.run("morningServerMs_(Date.UTC(2026, 10, 1, 5, 59)) - Date.UTC(2026, 10, 1, 5, 59)") === 3 * H &&
+   MM.run("morningServerMs_(Date.UTC(2026, 10, 1, 6, 0)) - Date.UTC(2026, 10, 1, 6, 0)") === 2 * H,
+   'broker clock: UTC+3 in US summer time, UTC+2 from 02:00 New York time on 1 Nov 2026');
+MM.setNow(wedMorning);
+const c4 = JSON.parse(MM.run('JSON.stringify(morningH4_(twelveCandles_("XAU/USD", 60, 2000)).filter(x => x.done))'));
+const research = require(path.join(__dirname, '..', 'research', 'sd_lab.js'));
+const rz = research.orderBlocks(c4.map((k, i) => Object.assign({}, k, { last: i })), 3, 50).map(z => [z.side, z.near, z.far, z.formed]);
+const az = JSON.parse(MM.run('JSON.stringify(morningOrderBlocks_(' + JSON.stringify(c4) + ', 3, 50))')).map(z => [z.side, z.near, z.far, z.at]);
+ok(rz.length > 10 && JSON.stringify(rz) === JSON.stringify(az), 'the morning map finds the same order blocks as research/sd_lab.js (' + az.length + ' on test data)');
+MM.run('morningMapOff()');
+ok(MM.triggers.filter(t => t.getHandlerFunction() === 'runMorningMap').length === 0, 'Morning map: stop removes the timer');
+const O3 = world({ markets: MARKETS, props: { MT5_KEY: 'mk' }, triggers: ['runMonitor', 'runMorningMap'] });
+O3.run('oldSystemOff()');
+ok(O3.triggers.length === 1 && O3.triggers[0].getHandlerFunction() === 'runMorningMap', 'switching the old system off keeps the morning map\'s timer');
 
 /* ---------------------------------------------------------------- */
 const ai = process.argv.indexOf('--against');

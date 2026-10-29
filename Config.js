@@ -240,6 +240,11 @@ function secret_(key, required) {
   return v || '';
 }
 
+/** The owner's Telegram chat: Script Property TELEGRAM_CHAT_ID (set by Connect Telegram), else CONFIG.ALERTS. */
+function telegramChatId_() {
+  return secret_('TELEGRAM_CHAT_ID', false) || String(CONFIG.ALERTS.telegramChatId || '');
+}
+
 /** Persistent bot state (position, stop, last bar seen). Kept as JSON. */
 function getState_() {
   const raw = PropertiesService.getScriptProperties().getProperty('BOT_STATE');

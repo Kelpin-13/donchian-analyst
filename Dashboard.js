@@ -354,7 +354,7 @@ function getSystemData(k) {
   return {
     provider: CONFIG.MARKET.provider, symbol: CONFIG.MARKET.symbol, interval: CONFIG.MARKET.intervalMinutes,
     model: CONFIG.ANALYST.model, agent: !!(CONFIG.AGENT && CONFIG.AGENT.enabled),
-    tvEnabled: CONFIG.TRADINGVIEW.enabled, challengerOn: !!(CONFIG.CHALLENGER && CONFIG.CHALLENGER.enabled), emailOn: !!CONFIG.ALERTS.email, telegramOn: !!CONFIG.ALERTS.telegramChatId,
+    tvEnabled: CONFIG.TRADINGVIEW.enabled, challengerOn: !!(CONFIG.CHALLENGER && CONFIG.CHALLENGER.enabled), emailOn: !!CONFIG.ALERTS.email, telegramOn: !!telegramChatId_(),
     triggers: triggers,
     lastRun: Number(PropertiesService.getScriptProperties().getProperty('LAST_MONITOR_RUN') || 0),
     serverNow: Date.now(),
