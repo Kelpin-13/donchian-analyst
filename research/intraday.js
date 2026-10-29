@@ -86,15 +86,17 @@ function dailyOf(bars) {
 /**
  * S: { name, flatMin, maxPerDay, onDay(i) → day state (may carry .orders), onClose(i, pos, D, dayTrades) →
  *      { exit: why } | { enter: { side, stopDist|stop, targetR } } | { orders: [...] } | null }
- * An order: { side, level, stop, targetR, until (minute of day), reverse (stop-and-reverse) }.
+ * An order: { side, level, stop, targetR, until (minute of day), reverse (stop-and-reverse), limit }.
+ * Orders are stop orders (buy above / sell below the market) unless `limit` is set: a limit order buys when
+ * the Ask falls to its level and sells when the Bid rises to it, at the level (or the better open), no slippage.
  */
 function backtest(bars, S, cost) {
   const trades = [];
   const slip = px => cost.slipPct ? px * cost.slipPct : cost.slip;
   let pos = null, orders = [], pendEntry = null, pendExit = null, D = {}, dayTrades = 0;
 
-  function enter(side, raw, i, spec, viaStop) {
-    const fill = raw + side * slip(raw);                   // raw is already Ask for a buy, Bid for a sell
+  function enter(side, raw, i, spec, viaStop, isLimit) {
+    const fill = isLimit ? raw : raw + side * slip(raw);   // raw is already Ask for a buy, Bid for a sell
     const stop = spec.stop !== undefined ? spec.stop : fill - side * spec.stopDist;
     const risk = (fill - stop) * side;
     if (!(risk > 0)) return;                               // gapped past its own stop: no trade
@@ -126,11 +128,14 @@ function backtest(bars, S, cost) {
 
     orders = orders.filter(o => m < o.until);
     if (!pos && orders.length && dayTrades < S.maxPerDay) {
-      const hit = orders.filter(o => o.side === 1 ? k.h + k.sp >= o.level : k.l <= o.level);
+      const hit = orders.filter(o => o.limit ? (o.side === 1 ? k.l + k.sp <= o.level : k.h >= o.level)
+                                             : (o.side === 1 ? k.h + k.sp >= o.level : k.l <= o.level));
       if (hit.length) {
         // Both sides in one bar: take the one nearer the open; the stop check below then assumes the worst.
         const o = hit.sort((a, b) => Math.abs(a.level - k.o) - Math.abs(b.level - k.o))[0];
-        enter(o.side, o.side === 1 ? Math.max(k.o + k.sp, o.level) : Math.min(k.o, o.level), i, o, true);
+        const raw = o.limit ? (o.side === 1 ? Math.min(k.o + k.sp, o.level) : Math.max(k.o, o.level))
+                            : (o.side === 1 ? Math.max(k.o + k.sp, o.level) : Math.min(k.o, o.level));
+        enter(o.side, raw, i, o, true, !!o.limit);
         orders = [];
       }
     }
