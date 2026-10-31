@@ -10,6 +10,9 @@
 //| tester, and never in the first minute of an M15 bar, when the    |
 //| EAs place their orders: a slow reply can't delay a trade.        |
 //|                                                                  |
+//| With the Sheet URL or key blank nothing is sent, and the EA says |
+//| so once in its journal (not in the tester).                      |
+//|                                                                  |
 //| MT5 must allow the address: Tools -> Options -> Expert Advisors  |
 //| -> Allow WebRequest for listed URL: https://script.google.com    |
 //| and https://script.googleusercontent.com                         |
@@ -34,11 +37,22 @@ string JsonEsc(const string s)
    return out;
   }
 
+// The problem to journal, or "" if it is the one last reported.
+string SyncProblem(const string problem)
+  {
+   if(problem == g_syncWarned) return "";
+   g_syncWarned = problem;
+   return problem;
+  }
+
 // Call from OnTimer. Returns a problem worth journaling (once), or "".
 // ea: "DonchianGold" or "GoldIntraday"; file: its journal; magicFrom..magicTo: its positions.
 string SheetSync(const string ea, const string file, const long magicFrom, const long magicTo)
   {
-   if(InpSheetUrl == "" || InpSheetKey == "" || MQLInfoInteger(MQL_TESTER)) return "";
+   if(MQLInfoInteger(MQL_TESTER)) return "";
+   if(InpSheetUrl == "" || InpSheetKey == "")
+      return SyncProblem("Google Sheet: the link is off because the Sheet URL or key input is blank. Copy both from the sheet's menu " +
+                         "Trading Agent -> MT5 gold EAs -> Connect MT5 (old system off: Trading Agent -> Connect MT5) into this EA's inputs (F7)");
    datetime wall = TimeLocal();
    if(wall - g_syncTry < 30) return "";
    if((long)TimeTradeServer() % 900 < 60) return "";               // the first minute of a bar is for orders
@@ -115,9 +129,7 @@ string SheetSync(const string ea, const string file, const long magicFrom, const
       Print(ea, " sheet sync: no confirmation (HTTP ", code, ", error ", err, "); retrying in 30 s");
       return "";
      }
-   if(problem == g_syncWarned) return "";
-   g_syncWarned = problem;
-   return problem;
+   return SyncProblem(problem);
   }
 
 // What a closed position made or lost in account money: profit + swap + commission + fees of its deals.

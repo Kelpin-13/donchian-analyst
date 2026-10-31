@@ -337,6 +337,32 @@ ok(O2.run("post0 = doPost({ postData: { contents: JSON.stringify({ source: 'mt5'
           "lines: ['2026.10.12 15:01:06,ALL,START,10000.00,XAUUSD.sml'] }) } }).getContent()") === 'stored 1',
    'with the old system off, the MT5 receiver still stores what the EAs send');
 
+section('MT5 Sheet link off');
+// MQL5 can't run here: the order of its checks is read from the source, and its message goes through the real receiver.
+const readMt5 = f => fs.readFileSync(path.join(__dirname, '..', 'mt5', f), 'utf8');
+const syncSrc = readMt5('SheetSync.mqh');
+const blankCode = /string SheetSync\([^)]*\)\s*\{\s*if\(MQLInfoInteger\(MQL_TESTER\)\) return "";\s*if\(InpSheetUrl == "" \|\| InpSheetKey == ""\)\s*return SyncProblem\(([^;]*)\);/.exec(syncSrc);
+ok(!!blankCode, 'SheetSync checks for the tester first, so a blank URL or key stays silent there');
+const blankWarn = blankCode ? blankCode[1].match(/"[^"]*"/g).map(s => s.slice(1, -1)).join('') : '';
+ok(/Sheet URL or key input is blank/.test(blankWarn) && blankWarn.includes('Trading Agent -> MT5 gold EAs -> Connect MT5') &&
+   blankWarn.includes('Trading Agent -> Connect MT5') && /^[\x20-\x7e]+$/.test(blankWarn),
+   'the warning says the URL or key is blank and names the fix in both menus, in plain ASCII for the ANSI journal');
+ok(/string SyncProblem\(const string problem\)\s*\{\s*if\(problem == g_syncWarned\) return "";\s*g_syncWarned = problem;\s*return problem;/.test(syncSrc) &&
+   /return SyncProblem\(problem\);/.test(syncSrc), 'every Sheet problem goes through the one once-only check (g_syncWarned)');
+ok(['GoldIntraday.mq5', 'DonchianGold.mq5'].every(f => /string problem = SheetSync\([^\n]*\n\s*if\(problem != ""\) Journal\((0, )?"WARN", problem\);/.test(readMt5(f))),
+   'both EAs journal what SheetSync returns as a WARN row');
+const LO = world({ markets: MARKETS, props: { MT5_KEY: 'mk' } });
+LO.setNow(Date.UTC(2026, 9, 12, 21));
+const loPost = body => LO.run('doPost(' + JSON.stringify({ postData: { contents: JSON.stringify(Object.assign({}, base, body)) } }) + ').getContent()');
+const withWarn = (lines, i, row) => lines.slice(0, i).concat(row, lines.slice(i));
+ok(loPost({ ea: 'GoldIntraday', lines: withWarn(intradayLines, 4, '2026.10.12 16:30:30,ALL,WARN,10000.00,' + blankWarn) }) === 'stored 7' &&
+   loPost({ ea: 'DonchianGold', lines: withWarn(h4Lines, 2, '2026.10.12 16:30:30,WARN,10000.00,' + blankWarn) }) === 'stored 3',
+   'the warning row is stored once per EA, also while a trade is open');
+const loWarn = rowsOf(LO, 'MT5 Log').filter(r => r[4] === 'WARN');
+ok(loWarn.length === 2 && loWarn[0][3] === 'ALL' && loWarn[1][3] === 'H4' && loWarn.every(r => r[5] === 10000 && r[6] === blankWarn),
+   'its columns land right in both journal formats, the whole message in Detail');
+ok(JSON.stringify(rowsOf(LO, 'MT5 Trades')) === JSON.stringify(tradeRows), 'the warning row changes nothing in MT5 Trades, even between an entry and its exit');
+
 section('Web app: Telegram messages');
 const T = world({ markets: MARKETS });
 const tg = (chat, text) => T.run('doPost(' + JSON.stringify({ postData: { contents: JSON.stringify(
