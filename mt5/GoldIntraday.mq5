@@ -20,13 +20,14 @@
 //| 0.01 lots a trade, no averaging down, no martingale, daily       |
 //| loss limit, kill switch (global variable DG_KILL = 1, shared    |
 //| with DonchianGold). Everything it needs is rebuilt from prices   |
-//| and the account on a restart.                                    |
+//| and the account on a restart. After a "market closed" reply      |
+//| nothing is sent until gold has a newer quote.                    |
 //|                                                                  |
 //| Parity: research/parity_intraday.js after a Strategy Tester run  |
 //| (M15, 1 minute OHLC).                                            |
 //+------------------------------------------------------------------+
 #property copyright   "Donchian Analyst (personal research)"
-#property version     "1.12"
+#property version     "1.13"
 #property description "Six intraday gold strategies, flat before the rollover. Demo accounts only."
 
 #include <Trade\Trade.mqh>
@@ -115,6 +116,10 @@ long     g_flatDay = -1;
 int      g_flatMin = 23 * 60;
 bool     g_armed = false;              // the wants are set for the bar in progress (false right after a start)
 bool     g_noChase = false;            // armed mid-bar after a start: a level already passed is not chased
+// Set at start-up and on a "market closed" reply: nothing is sent until gold has a quote newer than this one
+// (its time in ms; -1 = not waiting).
+long     g_waitQuote = -1;
+bool     g_waitSaid = true;            // the journal already says why orders wait
 
 //--- small helpers ----------------------------------------------------------
 double GVGet(const string name, const double def) { string k = GVP + name; return GlobalVariableCheck(k) ? GlobalVariableGet(k) : def; }
@@ -191,6 +196,31 @@ void JournalFailure(const int k, const string what)
    g_lastErr[k] = rc;
    Journal(k, "ERROR", what + " failed, retcode " + IntegerToString((int)rc) + " (" + trade.ResultRetcodeDescription() + ")" +
            (Transient(rc) ? "; will retry" : ""));
+  }
+
+//--- market closed: nothing goes out until gold's own quote moves on ----------
+// No new quote means no new bar, so what is pending would be resent on every timer event, priced from the last
+// quote before the close. TimeCurrent() can't tell: it stands still over a weekend and follows other symbols'
+// quotes during gold's daily break, and the session table doesn't know holidays.
+long LastQuoteMs() { MqlTick q; return SymbolInfoTick(_Symbol, q) ? q.time_msc : 0; }
+
+bool WaitingForQuote()
+  {
+   if(g_waitQuote < 0) return false;
+   if(LastQuoteMs() > g_waitQuote) { g_waitQuote = -1; return false; }
+   if(!g_waitSaid)
+     {
+      g_waitSaid = true;
+      Journal(0, "WAIT", "no new price yet (market closed, or the EA has just started): orders wait for the next one");
+     }
+   return true;
+  }
+
+void NoteRefusal(const uint rc)
+  {
+   if(rc != TRADE_RETCODE_MARKET_CLOSED) return;
+   g_waitQuote = LastQuoteMs();
+   g_waitSaid = true;                                          // the failure's journal row says so
   }
 
 //--- indicators, identical to research/intraday.js ---------------------------
@@ -319,13 +349,23 @@ ulong FindOrder(const int k, const int s, double &price, double &sl)
    return 0;
   }
 
+// Cancels a resting order; false while it is still there.
+bool CancelOrder(const int k, const ulong ord)
+  {
+   if(WaitingForQuote()) return false;
+   if(trade.OrderDelete(ord)) return true;
+   NoteRefusal(trade.ResultRetcode());
+   JournalFailure(k, "cancel order");
+   return false;
+  }
+
 void DeleteOrders(const int k)
   {
    for(int s = 0; s < 2; s++)
      {
       double p, sl;
       ulong t = FindOrder(k, s, p, sl);
-      if(t != 0 && !trade.OrderDelete(t)) JournalFailure(k, "cancel order");
+      if(t != 0) CancelOrder(k, t);
      }
   }
 
@@ -395,6 +435,7 @@ void Remember(const int k, const ulong id, const int dir)
 bool Enter(const int k, const int dir, const double slAbs, const double stopDist, const string why)
   {
    if(!IsDemo()) { Alert("GoldIntraday: not a demo account. No order sent."); ExpertRemove(); return false; }
+   if(WaitingForQuote()) return true;                          // it stays queued; its stop comes from the new quote
    string reason = "";
    if(!EntryAllowed(reason)) { Journal(k, "SKIP", reason); return false; }
    double price = dir == 1 ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
@@ -414,6 +455,7 @@ bool Enter(const int k, const int dir, const double slAbs, const double stopDist
    bool ok = dir == 1 ? trade.Buy(lots, _Symbol, 0, sl, tp, NAMES[k]) : trade.Sell(lots, _Symbol, 0, sl, tp, NAMES[k]);
    if(!ok || trade.ResultRetcode() != TRADE_RETCODE_DONE)
      {
+      NoteRefusal(trade.ResultRetcode());
       JournalFailure(k, dir == 1 ? "buy" : "sell");
       return Transient(trade.ResultRetcode());
      }
@@ -440,6 +482,7 @@ int PlaceStop(const int k, const int s, const Want &w)
       if(g_skipDay[k] != today) { g_skipDay[k] = today; Journal(k, "SKIP", reason + " (stop " + Px(MathAbs(w.level - w.sl)) + " away)"); }
       return 1;
      }
+   if(WaitingForQuote()) return 3;
    double level = w.level, sl = w.sl, tp = TpPrice(k, dir, level, sl);
    // Let the broker cancel it at `until` too, unless that is too close to be accepted (the EA cancels it anyway).
    datetime exp = (datetime)(DayOf(TimeCurrent()) * 86400 + w.until * 60);
@@ -455,6 +498,7 @@ int PlaceStop(const int k, const int s, const Want &w)
               DoubleToString(lots, 3) + " lots, until " + Hm(w.until) + (tp > 0 ? ", take-profit " + Px(tp) : ""));
       return 0;
      }
+   NoteRefusal(rc);
    if(rc != TRADE_RETCODE_MARKET_CLOSED) JournalFailure(k, (dir == 1 ? "buy" : "sell") + " stop order");   // closed: the 01:00 open, expected
    return Transient(rc) ? 3 : 2;
   }
@@ -464,6 +508,7 @@ void CloseStrat(const int k, const string why)
   {
    ulong t; int s; datetime o;
    if(!FindPos(k, t, s, o)) { g_exitWhy[k] = ""; return; }
+   if(WaitingForQuote()) { g_exitWhy[k] = why; return; }
    trade.SetExpertMagicNumber(Magic(k));
    if(trade.PositionClose(t, InpDeviationPts) && trade.ResultRetcode() == TRADE_RETCODE_DONE)
      {
@@ -477,6 +522,7 @@ void CloseStrat(const int k, const string why)
       return;
      }
    g_exitWhy[k] = why;
+   NoteRefusal(trade.ResultRetcode());
    JournalFailure(k, "EXIT_" + why + " close");
   }
 
@@ -658,7 +704,7 @@ void SyncOrders()
          bool live = g_want[k][s].on && m < g_want[k][s].until && allowed && !oneDone && g_trades[k] < MAXDAY[k];
          if(!live)
            {
-            if(ord != 0 && !trade.OrderDelete(ord)) JournalFailure(k, "cancel order");
+            if(ord != 0) CancelOrder(k, ord);
             if(g_want[k][s].on && (m >= g_want[k][s].until || oneDone || g_trades[k] >= MAXDAY[k])) g_want[k][s].on = false;
             continue;
            }
@@ -669,8 +715,7 @@ void SyncOrders()
            {
             if(MathAbs(price - level) > _Point / 2 || MathAbs(sl - g_want[k][s].sl) > _Point / 2)
               {
-               if(trade.OrderDelete(ord)) g_want[k][s].placed = false;            // replaced next tick
-               else JournalFailure(k, "cancel order");
+               if(CancelOrder(k, ord)) g_want[k][s].placed = false;               // replaced next tick
               }
             else g_want[k][s].placed = true;
             continue;
@@ -841,6 +886,8 @@ int OnInit()
      }
    g_day.day = -1; g_day.ok = false;
    g_armed = false; g_noChase = false;
+   g_waitQuote = LastQuoteMs();                                // nothing goes out on a quote from before this start
+   g_waitSaid = false;
    EventSetTimer(10);
    Journal(0, "START", _Symbol + (InpFixedLots > 0 ? ", fixed " + DoubleToString(InpFixedLots, 3) + " lots" : ", risk " + DoubleToString(InpRiskPct, 2) + "%") + " a trade, strategies" +
            (InpNyOrb ? " NY_ORB" : "") + (InpAsian ? " ASIAN_NARROW" : "") + (InpDualThrust ? " DUAL_THRUST" : "") +

@@ -13,14 +13,15 @@
 //| position at a time,                                              |
 //| no averaging down, no martingale, daily loss limit, kill switch. |
 //|                                                                  |
-//| Gold closes for about an hour at server midnight, so the 00:00   |
-//| bar's orders can meet "market closed": an entry keeps trying     |
-//| until its bar ends, an exit until it is done. A position closed  |
+//| Gold closes for about an hour at server midnight and for the     |
+//| weekend, so orders can meet "market closed": an entry stays      |
+//| pending until its bar ends, an exit until it is done, and nothing|
+//| is sent again until gold has a newer quote. A position closed    |
 //| by anything but this EA (broker stop, stop-out, a human) is      |
 //| journaled as such.                                               |
 //+------------------------------------------------------------------+
 #property copyright   "Donchian Analyst (personal research)"
-#property version     "1.03"
+#property version     "1.04"
 #property description "Donchian breakout on gold, long and short. Demo accounts only."
 
 #include <Trade\Trade.mqh>
@@ -56,6 +57,10 @@ string GVP;                    // global-variable prefix, per magic number
 const string JOURNAL = "DonchianGold_journal.csv";
 // Exit reasons, stored by index while an exit waits to be retried (0 = none pending).
 string EXIT_NAMES[] = { "", "EXIT_STOP", "EXIT_CHANNEL", "EXIT_TIME", "KILL_SWITCH", "EXIT_RETRY" };
+// Set at start-up and on a "market closed" reply: nothing is sent until gold has a quote newer than this one
+// (its time in ms; -1 = not waiting).
+long   g_waitQuote = -1;
+bool   g_waitSaid  = true;     // the journal already says why orders wait
 
 //--- persistent state: terminal global variables survive restarts --------
 double GVGet(const string name, const double def) { string k = GVP + name; return GlobalVariableCheck(k) ? GlobalVariableGet(k) : def; }
@@ -101,6 +106,31 @@ void Journal(const string event, const string detail)
              DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2), detail);
    FileClose(h);
    Print("DonchianGold ", event, ": ", detail);
+  }
+
+//--- market closed: nothing goes out until gold's own quote moves on ------
+// No new quote means no new bar, so a pending order would be resent on every timer event for the whole
+// weekend, priced from the last quote before the close. TimeCurrent() can't tell: it stands still at Friday's
+// last tick over a weekend, so a session check on it reads "open"; nor does the session table know holidays.
+long LastQuoteMs() { MqlTick q; return SymbolInfoTick(_Symbol, q) ? q.time_msc : 0; }
+
+bool WaitingForQuote()
+  {
+   if(g_waitQuote < 0) return false;
+   if(LastQuoteMs() > g_waitQuote) { g_waitQuote = -1; return false; }
+   if(!g_waitSaid)
+     {
+      g_waitSaid = true;
+      Journal("WAIT", "no new price yet (market closed, or the EA has just started): orders wait for the next one");
+     }
+   return true;
+  }
+
+void NoteRefusal(const uint rc)
+  {
+   if(rc != TRADE_RETCODE_MARKET_CLOSED) return;
+   g_waitQuote = LastQuoteMs();
+   g_waitSaid = true;                                              // its ERROR row says so
   }
 
 //--- indicators, identical to Indicator.js -------------------------------
@@ -171,6 +201,7 @@ void ClearTradeState()
 
 void ClosePosition(const ulong ticket, const string why)
   {
+   if(WaitingForQuote()) { GVSet("exit_pending", ExitCode(why)); return; }
    if(trade.PositionClose(ticket, InpDeviationPts) && trade.ResultRetcode() == TRADE_RETCODE_DONE)
      {
       int tries = (int)GVGet("exit_tries", 0);
@@ -183,6 +214,7 @@ void ClosePosition(const ulong ticket, const string why)
    // Keep trying on every tick until the position is gone: an exit is never skipped.
    // One journal row per new problem, not one per attempt.
    uint rc = trade.ResultRetcode();
+   NoteRefusal(rc);
    GVSet("exit_pending", ExitCode(why));
    GVSet("exit_tries", GVGet("exit_tries", 0) + 1);
    if(GVGet("exit_err", -1) != rc)
@@ -236,6 +268,7 @@ bool EntryAllowed(string &reason)
 bool OpenPosition(const int dir, const double atr, const datetime sigBar)
   {
    if(!IsDemo()) { Alert("DonchianGold: not a demo account. No order sent."); ExpertRemove(); return false; }
+   if(WaitingForQuote()) return true;                              // it stays pending; its stops come from the new quote
    double eq = AccountInfoDouble(ACCOUNT_EQUITY);
    double stopDist = InpStopAtr * atr;
    double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
@@ -276,6 +309,7 @@ bool OpenPosition(const int dir, const double atr, const datetime sigBar)
      {
       uint rc = trade.ResultRetcode();
       bool retry = Transient(rc);
+      NoteRefusal(rc);
       if(GVGet("entry_err", -1) != rc)                             // one journal row per new problem
         {
          GVSet("entry_err", rc);
@@ -446,6 +480,8 @@ int OnInit()
    trade.SetTypeFillingBySymbol(_Symbol);
    trade.LogLevel(LOG_LEVEL_NO);                                   // the journal records every failure once
    GVDel("entry_err"); GVDel("exit_err");                           // report a problem that is still there after a restart
+   g_waitQuote = LastQuoteMs();                                     // a pending order waits for a quote from after this start
+   g_waitSaid = false;
    EventSetTimer(30);
    Journal("START", _Symbol + " " + EnumToString(InpTimeframe) + ", long " + (InpAllowLong ? "on" : "off") +
            ", short " + (InpAllowShort ? "on" : "off") + (InpFixedLots > 0 ? ", fixed " + DoubleToString(InpFixedLots, 3) + " lots" : ", risk " + DoubleToString(InpRiskPct, 2) + "%") + ", take-profit " + DoubleToString(InpTpR, 1) + "R" +

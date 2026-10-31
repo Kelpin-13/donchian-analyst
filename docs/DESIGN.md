@@ -385,3 +385,31 @@ drawdown $959 -> $986, worst day -$428 -> -$268, worst trade -$212 both ways. 20
 - The levels were tested on 2023-2026 only, the bars the research has. The 18-year figures in `Mt5.js` come from
   tester runs without targets, until the older eras are run again.
 - The H4 tester run now needs "1 minute OHLC", so the target fires inside the bar as it does live.
+
+## 18. Market closed: nothing is resent until gold has a new quote
+
+Gold shuts for the daily break and the weekend. Both EAs used to resend a refused order on every tick and every timer
+event until its bar ended, and no bar can end while no quotes come. Attached on Saturday 31 Oct 2026 at 13:05 local
+with a short signal pending, DonchianGold sent a market sell every 30 seconds, about 5,000 until Monday. And its stop
+and target came from the current bid and ask, so a timer event after the reopening but before the first tick priced
+them from Friday, and that order would have been accepted.
+
+The rule, in both EAs: at start-up and after a "market closed" reply nothing goes out until gold has a quote newer
+than the last one seen (`WaitingForQuote()`, `NoteRefusal()`). The order stays pending meanwhile. On the first Monday
+tick the old signal is dropped with a SKIP row and the newest closed bar is decided afresh, as before. Exits stay
+pending until they are done, and GoldIntraday holds its stop orders and cancels back the same way.
+
+- It reads gold's own quote time on purpose. `TimeCurrent()` stands still at Friday's last tick over a weekend, so
+  a session check on it reads "open", and during gold's daily break other symbols' quotes can move it. The session
+  table does not know holidays either: 30-odd days in 2023-2026 ended early (last bar 19:58 to 21:43 server).
+- Only "market closed" waits. Any other failure, and any send with no such reply before it, works as before.
+- Quotes can come before orders do: in the tester, history up to Feb 2024 starts at 01:03 while orders open at 01:05.
+  Those entries are resent once per new quote and fill at 01:05:00, in the same bar. A fixed back-off would have moved
+  those fills.
+- **Strategy Tester: use "1 minute OHLC".** "Open prices" has no tick between bar opens, so what is refused at the
+  00:00 bar can no longer fill at 01:05 on a stale quote, as it used to. Those entries now end in a SKIP row and those
+  exits wait for the 04:00 bar.
+- `tests/mql.js` runs the EAs' own MQL5 functions in Node against a fake broker, for the timelines the tester can't
+  stage. Fed the real M1 history 2023-2026 that way, the old and new builds made the same trades at the same times and
+  prices; that replay matched the real tester run's entries at 100% (H4) and 99.8% (intraday) of them. Only the wording
+  moves: fewer failed attempts in an exit row, and in GoldIntraday one ERROR row per closed market, not one per strategy.

@@ -386,6 +386,169 @@ ok(loWarn.length === 2 && loWarn[0][3] === 'ALL' && loWarn[1][3] === 'H4' && loW
    'its columns land right in both journal formats, the whole message in Detail');
 ok(JSON.stringify(rowsOf(LO, 'MT5 Trades')) === JSON.stringify(tradeRows), 'the warning row changes nothing in MT5 Trades, even between an entry and its exit');
 
+section('MT5 market closed');
+// The EAs' own functions, run by tests/mql.js against a fake broker, through the timelines that went wrong.
+{   // a block: its short names are taken at the top level of this file
+const { loadEa, fakeBroker, loadDonchianGold, functionsOf, RETCODES } = require('./mql');
+const srv = (mo, d, h, mi = 0, se = 0) => Date.UTC(2026, mo - 1, d, h, mi, se) / 1000;
+const goldOpen = t => { const d = new Date(t * 1000), m = d.getUTCHours() * 60 + d.getUTCMinutes(); return d.getUTCDay() >= 1 && d.getUTCDay() <= 5 && m >= 65; };   // from 01:05 server
+const FRI_LAST = srv(10, 30, 23, 58, 59), SAT_ATTACH = srv(10, 31, 8, 5, 18), MON_OPEN = srv(11, 2, 1, 5), FRI_BAR = srv(10, 30, 20), MON_BAR = srv(11, 2, 0);
+const DG_GV = 'DG_20261009_';
+/** Falling H4 bars up to the bar in progress at `last`; the newest closed bar breaks the 20-bar low: a short signal. */
+function fallingBars(last) {
+  const bars = [];
+  for (let i = 300; i >= 0; i--) { const px = 4000 + i * 0.5; bars.push({ time: last - i * 14400, open: px + 0.2, high: px + 1, low: px - 1, close: px - 0.2 }); }
+  Object.assign(bars[bars.length - 2], { low: 3989, close: 3990 });
+  return bars;
+}
+/** DonchianGold started at server time `clock` with Friday's last quote: TimeCurrent() shows it, however late it is. */
+function dgAttach(clock, seed) {
+  const b = fakeBroker({ magic: 20261009, open: goldOpen });
+  b.bars = fallingBars(FRI_BAR);
+  b.tick(FRI_LAST, 3896.525);
+  b.clock = clock;
+  b.gv.set(DG_GV + 'lastbar', FRI_BAR - 3 * 14400);               // not a first start: this bar has not been decided yet
+  if (seed) seed(b);
+  const ea = loadDonchianGold(b);
+  ea.OnInit();
+  return { b, ea };
+}
+const timers = (b, ea, from, to, step) => { let n = 0; for (let t = from; t < to; t += step) { b.clock = t; ea.Run(); n++; } return n; };
+const rowsNamed = (b, ev) => b.rows.filter(r => r.ev === ev);
+
+// Attached on Saturday with a short signal pending (31 Oct 2026, 13:05 local).
+const W = dgAttach(SAT_ATTACH);
+const satTimers = timers(W.b, W.ea, SAT_ATTACH + 30, MON_OPEN, 30);
+ok(satTimers > 4900 && W.b.sends.length === 0, 'attached on a Saturday: ' + satTimers + ' timer events until Monday, not one order sent');
+ok(rowsNamed(W.b, 'BAR').length === 1 && /short signal/.test(rowsNamed(W.b, 'BAR')[0].detail) && rowsNamed(W.b, 'WAIT').length === 1 && rowsNamed(W.b, 'ERROR').length === 0,
+   'the signal is journaled once, with one row saying why it waits');
+ok(W.b.gv.get(DG_GV + 'entry_dir') === -1 && W.b.gv.get(DG_GV + 'entry_bar') === FRI_BAR - 14400, 'the entry stays pending for the bar it belongs to');
+timers(W.b, W.ea, MON_OPEN, MON_OPEN + 60, 30);
+ok(W.b.sends.length === 0, 'the market reopens and the timer fires before the first new tick: still nothing sent on Friday\'s price');
+// The first Monday tick: the old signal goes, the newest closed bar is decided afresh.
+W.b.bars.push({ time: MON_BAR, open: 3990, high: 3990, low: 3990, close: 3990 });
+W.b.tick(MON_OPEN + 61, 3990);
+W.ea.Run();
+ok(rowsNamed(W.b, 'SKIP').length === 1 && /^short entry not filled before its bar ended/.test(rowsNamed(W.b, 'SKIP')[0].detail) && !W.b.gv.has(DG_GV + 'entry_dir'),
+   'first Monday tick: the old signal is dropped with a SKIP row');
+const monBar = rowsNamed(W.b, 'BAR')[1];
+ok(monBar && monBar.detail.startsWith('2026.10.30 20:00') && /FLAT$/.test(monBar.detail) && W.b.sends.length === 0, 'and the newest closed bar is decided afresh, here with no signal');
+// The same Monday with a fresh signal: its stop and target come from Monday's quote.
+const F = dgAttach(SAT_ATTACH);
+timers(F.b, F.ea, SAT_ATTACH + 30, SAT_ATTACH + 300, 30);
+Object.assign(F.b.bars[F.b.bars.length - 1], { low: 3979, close: 3980 });
+F.b.bars.push({ time: MON_BAR, open: 3975, high: 3975, low: 3975, close: 3975 });
+F.b.tick(MON_OPEN + 1, 3975);
+F.ea.Run();
+const fSend = F.b.sends[0];
+ok(F.b.sends.length === 1 && fSend.kind === 'sell' && rowsNamed(F.b, 'SKIP').length === 1 && rowsNamed(F.b, 'ENTRY_SHORT').length === 1, 'a fresh signal on Monday fills on that first tick');
+ok(Math.abs((fSend.sl - 3975) / (3975 - fSend.tp) - 4 / 3) < 0.001, 'its stop loss and take-profit are worked out from Monday\'s quote, not Friday\'s');
+// Already running when the market shut: one refusal, then quiet.
+const R = dgAttach(FRI_LAST);
+R.b.tick(FRI_LAST + 1, 3896.6);
+R.b.clock = srv(10, 31, 0, 0, 5);
+R.ea.Run();
+const refusedOnce = R.b.sends.length === 1 && R.b.sends[0].rc === RETCODES.TRADE_RETCODE_MARKET_CLOSED;
+timers(R.b, R.ea, R.b.clock + 30, MON_OPEN + 60, 30);
+ok(refusedOnce && R.b.sends.length === 1 && rowsNamed(R.b, 'ERROR').length === 1 && R.b.gv.get(DG_GV + 'entry_dir') === -1,
+   'running when the market shuts: one "market closed" reply, one ERROR row, no resend all weekend, the entry still pending');
+
+// The tester's daily break: quotes from 01:03, orders from 01:05, ticks at :00 :20 :40 :59, the timer on :00 and :30.
+[['tick first', true], ['timer first', false]].forEach(([order, tickFirst]) => {
+  const D = dgAttach(FRI_LAST);
+  const DAY0 = srv(11, 3, 0);
+  D.b.bars.push({ time: DAY0, open: 3990, high: 3990, low: 3990, close: 3990 });
+  Object.assign(D.b.bars[D.b.bars.length - 2], { low: 3979, close: 3980 });
+  const start = srv(11, 3, 1, 3), quotes = new Map();
+  for (let m = 0; m < 3; m++) [0, 20, 40, 59].forEach((s, i) => quotes.set(start + m * 60 + s, 3970 - m - i / 10));
+  for (let t = start; t <= start + 120 && !D.b.position; t++) {
+    const isTick = quotes.has(t), isTimer = t % 30 === 0;
+    const onTick = () => { if (isTick) { D.b.tick(t, quotes.get(t)); D.ea.Run(); } };
+    const onTimer = () => { if (isTimer) { D.b.now = D.b.clock = t; D.ea.Run(); } };
+    if (tickFirst) { onTick(); onTimer(); } else { if (isTick) D.b.quote = { ms: t * 1000, bid: quotes.get(t), ask: quotes.get(t) + 0.3 }; onTimer(); onTick(); }
+  }
+  const filled = D.b.sends[D.b.sends.length - 1], fill = rowsNamed(D.b, 'ENTRY_SHORT')[0];
+  const refused = D.b.sends.filter(s => s.rc === RETCODES.TRADE_RETCODE_MARKET_CLOSED);
+  ok(fill && fill.t === start + 120 && filled.at === start + 120 && D.b.position && D.b.position.price === quotes.get(start + 120),
+     'daily break (' + order + '): the 01:03 entry fills at 01:05:00, in the same bar, at that tick\'s price');
+  ok(refused.length === 8 && new Set(refused.map(s => s.at)).size === 8 && refused.every(s => quotes.has(s.at)) && rowsNamed(D.b, 'ERROR').length === 1,
+     'daily break (' + order + '): a refused entry is resent once per new quote, never by the timer alone, and journaled once');
+  ok(!rowsNamed(D.b, 'SKIP').length, 'daily break (' + order + '): nothing skipped');
+});
+
+// Exits: never dropped, never resent into a closed market.
+const withLong = b => {
+  b.position = { ticket: 7, dir: 1, lots: 0.01, sl: 3500, tp: 0, price: 4100, time: FRI_BAR - 100 * 14400, magic: 20261009 };
+  b.gv.set(DG_GV + 'side', 1); b.gv.set(DG_GV + 'posid', 7); b.gv.set(DG_GV + 'stop', 4050); b.gv.set(DG_GV + 'sigbar', FRI_BAR - 20 * 14400);
+};
+const X = dgAttach(SAT_ATTACH, withLong);
+timers(X.b, X.ea, SAT_ATTACH + 30, MON_OPEN + 60, 30);
+ok(X.b.sends.length === 0 && X.b.position && X.b.gv.get(DG_GV + 'exit_pending') === 1, 'an exit decided on a Saturday: nothing sent, it stays pending through the reopening');
+X.b.tick(MON_OPEN + 61, 3990);
+X.ea.Run();
+ok(X.b.sends.length === 1 && !X.b.position && rowsNamed(X.b, 'EXIT_STOP').length === 1 && !X.b.gv.has(DG_GV + 'exit_pending'), 'it closes on the first new tick, before anything else');
+const K = dgAttach(SAT_ATTACH, b => { withLong(b); b.gv.set('DG_KILL', 1); });
+timers(K.b, K.ea, SAT_ATTACH + 30, SAT_ATTACH + 3600, 30);
+ok(K.b.sends.length === 0, 'the kill switch on a Saturday sends nothing either');
+K.b.tick(MON_OPEN + 1, 3990);
+K.ea.Run();
+ok(!K.b.position && rowsNamed(K.b, 'KILL_SWITCH').length === 1, 'and closes on the first new tick');
+// Only "market closed" waits: any other failure is sent again as before.
+const Q = dgAttach(FRI_LAST);
+Q.b.tick(FRI_LAST + 1, 3896.6);
+Q.b.refuseWith = RETCODES.TRADE_RETCODE_REQUOTE;
+Q.ea.Run(); Q.ea.Run();
+ok(Q.b.sends.length === 2, 'a requote is still resent straight away');
+
+// GoldIntraday: its own send paths, on the same broker.
+const giLoad = () => {
+  const b = fakeBroker({ magic: 20261013 + 3, open: goldOpen });
+  b.tick(FRI_LAST, 3896.525);
+  const env = Object.assign(b.env, { FindPos: () => !!b.position, HasPos: () => !!b.position, FindOrder: () => 77, EntryAllowed: () => true, LotsFor: () => 0.01,
+    DayOf: t => Math.floor(t / 86400), Magic: k => 20261013 + k, Px: p => (+p).toFixed(3), Hm: m => String(m) });
+  const ea = loadEa('GoldIntraday.mq5', { env, lift: ['IsDemo', 'Transient', 'LastQuoteMs', 'WaitingForQuote', 'NoteRefusal', 'JournalFailure', 'CancelOrder', 'DeleteOrders', 'Enter', 'PlaceStop', 'CloseStrat', 'TpPrice', 'RiskText', 'Weight', 'Remember', 'GVSet', 'GVGet', 'GVDel'] });
+  return { b, ea };
+};
+const started = g => { g.ea.set('g_waitQuote', g.ea.LastQuoteMs()); g.ea.set('g_waitSaid', false); };     // what OnInit does (checked below)
+const G = giLoad();
+started(G);
+G.b.position = { ticket: 9, dir: -1, lots: 0.01, sl: 3950, tp: 0, price: 3930, time: FRI_BAR, magic: 20261016 };
+let giTimers = 0;
+for (let t = SAT_ATTACH; t < MON_OPEN + 60; t += 10) { G.b.clock = t; G.ea.CloseStrat(3, 'SESSION'); giTimers++; }
+ok(G.b.sends.length === 0 && G.b.position && G.ea.get('g_exitWhy')[3] === 'SESSION' && rowsNamed(G.b, 'WAIT').length === 1,
+   'GoldIntraday restarted on a weekend holding a position: ' + giTimers + ' timer events, no close sent, the exit stays pending');
+G.b.tick(MON_OPEN + 61, 3990);
+G.ea.CloseStrat(3, 'SESSION');
+ok(!G.b.position && rowsNamed(G.b, 'EXIT_SESSION').length === 1 && G.ea.get('g_exitWhy')[3] === '', 'it closes on the first new tick');
+const G2 = giLoad();
+G2.b.clock = srv(10, 31, 0, 0, 5);
+G2.b.position = { ticket: 9, dir: -1, lots: 0.01, sl: 3950, tp: 0, price: 3930, time: FRI_BAR, magic: 20261016 };
+for (let i = 0; i < 50; i++) G2.ea.CloseStrat(3, 'SESSION');
+ok(G2.b.sends.length === 1 && rowsNamed(G2.b, 'ERROR').length === 1, 'a close refused as "market closed" is not resent until there is a new quote');
+const pending = [G2.ea.Enter(5, -1, 0, 20, 'x'), G2.ea.PlaceStop(1, 1, { level: 3800, sl: 3900, until: 1200 }), G2.ea.CancelOrder(1, 77)];
+G2.ea.DeleteOrders(1);
+ok(pending[0] === true && pending[1] === 3 && pending[2] === false && G2.b.sends.length === 1, 'nor is anything else: an entry stays queued, a stop order is tried again later, a cancel waits');
+G2.b.position = null;
+G2.b.tick(MON_OPEN + 1, 3990);
+ok(G2.ea.Enter(5, -1, 0, 20, 'x') === false && G2.b.sends.length === 2 && Math.abs(G2.b.sends[1].sl - 4010) < 1e-9, 'with a new quote the entry goes, its stop worked out from that quote');
+const G3 = giLoad();
+G3.b.tick(FRI_LAST + 1, 3896.6);
+G3.b.refuseWith = RETCODES.TRADE_RETCODE_REQUOTE;
+ok(G3.ea.Enter(5, -1, 0, 20, 'x') && G3.ea.Enter(5, -1, 0, 20, 'x') && G3.b.sends.length === 2, 'a requote is still resent straight away');
+
+// The rule only works if nothing goes around it.
+const SENDS = /\btrade\.(Buy|Sell|BuyStop|SellStop|PositionClose|OrderDelete)\(/;
+[['DonchianGold.mq5', ['ClosePosition', 'OpenPosition']], ['GoldIntraday.mq5', ['CancelOrder', 'CloseStrat', 'Enter', 'PlaceStop']]].forEach(([file, gated]) => {
+  const fns = functionsOf(readMt5(file));
+  ok(JSON.stringify(Object.keys(fns).filter(n => SENDS.test(fns[n].body)).sort()) === JSON.stringify(gated), file + ': only ' + gated.join(', ') + ' send orders');
+  ok(gated.every(n => { const s = fns[n].body, at = s.search(SENDS); return s.indexOf('WaitingForQuote()') >= 0 && s.indexOf('WaitingForQuote()') < at && s.indexOf('NoteRefusal(', at) > at; }),
+     file + ': each asks WaitingForQuote() before sending and reports the reply to NoteRefusal()');
+  ok(/g_waitQuote = LastQuoteMs\(\);[^\n]*\n\s*g_waitSaid = false;/.test(fns.OnInit.body), file + ': OnInit starts by waiting for a quote newer than the last one seen');
+  ok(/rc == TRADE_RETCODE_MARKET_CLOSED/.test(fns.Transient.body), file + ': "market closed" stays a reason to try again, not to give up');
+  ok(!/TimeCurrent|TimeTradeServer|SymbolInfoSession/.test(fns.WaitingForQuote.body + fns.LastQuoteMs.body), file + ': the wait reads gold\'s own quote time, not a clock that stands still over a weekend');
+});
+}
+
 section('Web app: Telegram messages');
 const T = world({ markets: MARKETS });
 const tg = (chat, text) => T.run('doPost(' + JSON.stringify({ postData: { contents: JSON.stringify(
