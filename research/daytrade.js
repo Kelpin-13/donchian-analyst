@@ -15,6 +15,9 @@
  *     bar's spread, sells at Bid; plus extra slippage per side.
  *   - cfg.hardK (H4 runs: 4): the EA's broker-side stop, hardK ATRs from the
  *     entry, which fires inside a bar (exit reason HARDSTOP).
+ *   - cfg.targetR (H4 runs: 1.5): the EA's take-profit at the broker, that many
+ *     strategy stops from the fill (exit reason TARGET). cfg.targetWait: after a
+ *     target, that side waits for a close back inside the entry channel.
  *
  * Results are in R (P&L ÷ the risk taken), which doesn't depend on leverage.
  * This is research only: nothing here trades.
@@ -49,7 +52,7 @@ const dayOf = t => Math.floor(t / 86400000);
 function simulate(bars, cfg, ser) {
   const s = ser || series(bars, cfg);
   const trades = [];
-  let pos = null, pending = null;
+  let pos = null, pending = null, waitSide = 0;   // waitSide (cfg.targetWait): after a target, that side waits for a close back inside the channel
   for (let i = 1; i < bars.length; i++) {
     const k = bars[i];
     if (k.t >= cfg.to) { if (pos) close(pos, k, 'WINDOW_END'); pos = null; break; }   // count it, don't drop it
@@ -75,15 +78,23 @@ function simulate(bars, cfg, ser) {
       close(pos, k, 'HARDSTOP', pos.side === 1 ? Math.min(k.o, pos.hard) : Math.max(k.o + k.sp, pos.hard));
       pos = null;
     }
+    // cfg.targetR: a broker-side take-profit, cfg.targetR x the strategy stop from the fill. A limit order: its level
+    // (or the better open), no slippage. A bar touching both is counted as the stop above, the worst case.
+    if (pos && pos.target !== null && (pos.side === 1 ? k.h >= pos.target : k.l + k.sp <= pos.target)) {
+      close(pos, k, 'TARGET', pos.side === 1 ? Math.max(k.o, pos.target) : Math.min(k.o + k.sp, pos.target), true);
+      if (cfg.targetWait) waitSide = pos.side;
+      pos = null;
+    }
     const up = s.entry.upper[i], lo = s.entry.lower[i], xu = s.exit.upper[i], xl = s.exit.lower[i];
     const e = s.ema[i], a = s.atr[i];
     if (up === null || lo === null || xu === null || xl === null || e === null || a === null) continue;
     const closeMin = minuteOfDay(k.t) + cfg.barMin;
+    if ((waitSide === 1 && k.c <= up) || (waitSide === -1 && k.c >= lo)) waitSide = 0;
     if (!pos) {
       const inSession = closeMin >= cfg.firstEntryMin && closeMin <= cfg.lastEntryMin;
       if (!inSession) continue;
-      if (cfg.dir !== 'short' && k.c > up && k.c > e) pending = { type: 'LONG', stopDist: cfg.k * a };
-      else if (cfg.dir !== 'long' && k.c < lo && k.c < e) pending = { type: 'SHORT', stopDist: cfg.k * a };
+      if (cfg.dir !== 'short' && k.c > up && k.c > e && waitSide !== 1) pending = { type: 'LONG', stopDist: cfg.k * a };
+      else if (cfg.dir !== 'long' && k.c < lo && k.c < e && waitSide !== -1) pending = { type: 'SHORT', stopDist: cfg.k * a };
     } else if (pos.side === 1) {
       if (k.c <= pos.stop) pending = { type: 'EXIT', why: 'STOP' };
       else if (k.c < xl) pending = { type: 'EXIT', why: 'CHANNEL' };
@@ -102,14 +113,15 @@ function simulate(bars, cfg, ser) {
     const fill = side === 1 ? (k.o + k.sp) * (1 + SLIP) : k.o * (1 - SLIP);
     // The EA sets its broker stop from the quote it sends the order at (Ask for a buy, Bid for a sell).
     const hard = (side === 1 ? k.o + k.sp : k.o) - side * (cfg.hardK || 0) * sig.stopDist / cfg.k;
-    return { side, t: k.t, entry: fill, stop: fill - side * sig.stopDist, hard, risk: sig.stopDist, bars: 0, spreadIn: k.sp, swap: 0 };
+    return { side, t: k.t, entry: fill, stop: fill - side * sig.stopDist, hard, risk: sig.stopDist, bars: 0, spreadIn: k.sp, swap: 0,
+             target: cfg.targetR ? fill + side * cfg.targetR * sig.stopDist : null };
   }
   // px: the quote the exit trades at (Bid to sell a long, Ask to buy back a short); default this bar's open.
-  function close(p, k, why, px) {
+  function close(p, k, why, px, isLimit) {
     if (px === undefined) px = p.side === 1 ? k.o : k.o + k.sp;
-    const fill = px * (1 - p.side * SLIP);
+    const fill = isLimit ? px : px * (1 - p.side * SLIP);
     const pnl = (fill - p.entry) * p.side + p.swap;     // per unit, swap included
-    trades.push({ t: p.t, exitT: k.t, side: p.side, r: pnl / p.risk, why, bars: p.bars,
+    trades.push({ t: p.t, exitT: k.t, side: p.side, r: pnl / p.risk, risk: p.risk, why, bars: p.bars,
                   costR: ((p.side === 1 ? p.spreadIn : k.sp) + p.entry * SLIP * 2) / p.risk });
   }
 }

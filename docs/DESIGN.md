@@ -320,3 +320,68 @@ and "high-probability" entries on a lower one. What was built, and why it looks 
   bot's latest private message), not in `Config.js`, so the public repo never holds it. The agent's
   Telegram handler and the old alerts read it through `telegramChatId_()`. Errors from the Bot API carry
   Telegram's description, never the URL (it contains the token).
+
+## 16. Fixed trade size (owner decision, 30 Oct 2026)
+
+Both EAs trade a fixed size, `InpFixedLots` = 0.01 lots (1 ounce), never below 0.01: they refuse to start
+with a smaller non-zero value. `InpFixedLots` = 0 brings back the earlier percent sizing, with its inputs and
+its ceilings. A fixed size over the leverage cap is not traded rather than cut. Entries, stops and exits are
+unchanged, so results in R stay comparable; dollars do not.
+
+What it changes. Stops are from the tester trades of April-October 2026; "size before" is what percent sizing gives on a $10,000 account at the median stop:
+
+| Strategy | Size before | Median stop = cost at 0.01 lots | 90th percentile | Largest |
+|---|---:|---:|---:|---:|
+| New York opening range | 0.006 | $20 | $29 | $44 |
+| Asian range breakout | 0.007 | $33 | $39 | $62 |
+| Dual Thrust | 0.001-0.002 | $126 | $207 | $256 |
+| R-Breaker | 0.004 | $52 | $61 | $80 |
+| Momentum at 16:00 | 0.002 | $53 | $74 | $92 |
+| Momentum at 20:00 | 0.004 | $52 | $71 | $92 |
+| H4 swing (2 x ATR; broker stop at twice that) | 0.013 | $74 | $90 | $152 |
+
+- Risk now follows the stop's width, not the account. Dual Thrust grows about 5x and carries the largest risk:
+  one stop can pass the 2% daily limit, which only blocks new trades. H4 shrinks by about a quarter.
+- Three things no longer apply at a fixed size: the half-risk weights on New York opening range and Momentum
+  at 16:00 (chosen on 14 Oct to cut the 2015-22 drawdown), the 1% and 2% per-trade ceilings, and Dual Thrust
+  sitting out days when its stop is too wide for the smallest size.
+- The size does not change as the account grows or falls, and the same 1 ounce is a far bigger bet at $4,000
+  gold than it was at $1,000.
+- Replaying the tester's intraday trades at 0.01 lots from $10,000 (closed trades, with the 2% daily limit;
+  percent sizing in brackets): 2008-14 +29.7% and 3.7% drawdown (+66.9%, 10.7%); 2015-22 +4.2%, 6.9% (+2.8%,
+  17.7%); 2023-26 +37.7%, 5.8% (+31.2%, 6.7%); April-October 2026 +6.7%, 5.7%, worst day -$233 (+2.3%, 2.4%,
+  -$63). The older periods flatter it because their stops were small in dollars; the last is closest to today.
+  The H4 EA's tester journals were not kept, so its dollars are not in this replay.
+
+## 17. Take-profit on every strategy (owner decision, 30 Oct 2026)
+
+Every order now carries a take-profit at the broker, so a trade can bank a gain even with the EA off. The level is
+a multiple of the trade's stop distance, set by inputs (0 = none) and chosen on 2023-2024 only, per strategy, as the
+best total R / drawdown R (`research/tp_lab.js`):
+
+| Strategy | Take-profit | Reached, 2025-26 | PF 2025-26, no target -> target |
+|---|---:|---:|---:|
+| New York opening range | 4R | 2% | 1.07 -> 1.08 |
+| Asian range breakout | 1.5R | 26% | 0.87 -> 1.07 |
+| Dual Thrust | 1.5R | 1% | 1.63 -> 1.68 |
+| R-Breaker | 3R | 0% | 2.03 -> 2.03 |
+| Momentum at 16:00 | 1.5R | 6% | 1.25 -> 1.20 |
+| Momentum at 20:00 | 1.5R | 1% | 1.26 -> 1.25 |
+| H4 swing | 1.5R (3 x ATR), then waits | 53% | 1.93 -> 2.08 |
+
+H4 needs the wait. Without it 84 of its 107 targets were followed by a new trade the same way within two bars, the
+same breakout bought again at a worse price, and the portfolio's drawdown rose from $959 to $1,214. After a target
+that side now waits for a close back inside the 20-bar channel. This rule was added after seeing that on all the
+data; only its level was chosen on 2023-2024 alone. Dual Thrust stops for the day after a target, as it does when
+it runs out of trades, so its reversal order is cancelled at once.
+
+At 0.01 lots, 2025-2026, the whole portfolio without and with the targets: PF 1.23 -> 1.28, +$3,136 -> +$4,698,
+drawdown $959 -> $986, worst day -$428 -> -$268, worst trade -$212 both ways. 2023-2024: PF 1.21 -> 1.23, +$1,478 ->
++$1,512, drawdown $415 -> $368, worst day -$67 -> -$83.
+
+- A target does not limit a loss: the stop does, which is why the worst trade does not move. The lever for that is
+  the stop's size. Skipping trades whose stop costs over $150 (40 of 2,690) takes the worst trade to -$127 and the
+  drawdown to $739; it is measured but not built.
+- The levels were tested on 2023-2026 only, the bars the research has. The 18-year figures in `Mt5.js` come from
+  tester runs without targets, until the older eras are run again.
+- The H4 tester run now needs "1 minute OHLC", so the target fires inside the bar as it does live.

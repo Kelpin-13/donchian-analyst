@@ -32,8 +32,8 @@ so the live results can be checked against the backtests.
 - **One market:** gold against the US dollar, traded as a CFD in MetaTrader 5.
 - **Rules, not opinions:** every entry, stop and exit is a fixed rule written in code. Nobody
   touches the trades.
-- **Small, fixed risk:** each trade risks a set slice of the account (0.125% to 1%) between its
-  entry and its stop loss, and the stop sits at the broker from the moment the trade opens.
+- **Fixed trade size:** every trade is 0.01 lots (1 ounce of gold), so each $1 the price moves is
+  $1. The stop and a take-profit sit at the broker from the moment the trade opens.
 - **Two robots:**
   - **DonchianGold** trades big trends on the 4-hour chart and holds for days.
   - **GoldIntraday** runs six short-term strategies on the 15-minute chart, and every trade is
@@ -88,15 +88,15 @@ fill-price and holiday-session details.
 Times are **broker time**, which is New York time + 7 hours all year. For example, 16:30 broker
 is 9:30 in New York, when the US stock market opens.
 
-| Strategy | Chart | When (broker time) | The idea in plain words | Risk a trade |
+| Strategy | Chart | When (broker time) | The idea in plain words | Its stop usually costs |
 |---|---|---|---|---|
-| **H4 swing breakout** | 4-hour | Any time; holds for days | Gold trends. A 4-hour close at a new 20-bar high, above the 100-bar average, often starts a move that lasts days. Sells are the mirror image. | 1% |
-| **New York opening range** | 15-min | Range 16:30–17:00, trades until 20:00 | The first half hour of New York trading often sets the direction for the session. Trade the breakout of that range, in the 4-hour trend's direction only. | 0.125% |
-| **Asian range breakout** | 15-min | Range 01:00–09:00, trades 09:00–15:00 | After an unusually quiet Asian night, Europe's open often breaks out hard. Only on narrow nights (Toby Crabel's rule). | 0.25% |
-| **Dual Thrust** | 15-min | 01:00–20:00 | A move of half the recent 4-day range away from the open is a real breakout. If stopped, it turns around and trades the other way (Michael Chalek). | 0.25% |
-| **R-Breaker** | 15-min | Every 15 min until 20:00 | Levels from yesterday's high, low and close: follow strong breakouts, and catch moves that fail at the day's extremes. In the 4-hour trend's direction. | 0.25% |
-| **Momentum at 16:00** | 15-min | One decision at 16:00 | The way gold has moved since the open tends to carry on into the US afternoon (Gao, Han, Li & Zhou, 2018). In the 4-hour trend's direction. | 0.125% |
-| **Momentum at 20:00** | 15-min | One decision at 20:00 | The same momentum idea, later in the day. | 0.25% |
+| **H4 swing breakout** | 4-hour | Any time; holds for days | Gold trends. A 4-hour close at a new 20-bar high, above the 100-bar average, often starts a move that lasts days. Sells are the mirror image. | $74 |
+| **New York opening range** | 15-min | Range 16:30–17:00, trades until 20:00 | The first half hour of New York trading often sets the direction for the session. Trade the breakout of that range, in the 4-hour trend's direction only. | $20 |
+| **Asian range breakout** | 15-min | Range 01:00–09:00, trades 09:00–15:00 | After an unusually quiet Asian night, Europe's open often breaks out hard. Only on narrow nights (Toby Crabel's rule). | $33 |
+| **Dual Thrust** | 15-min | 01:00–20:00 | A move of half the recent 4-day range away from the open is a real breakout. If stopped, it turns around and trades the other way (Michael Chalek). | $126 |
+| **R-Breaker** | 15-min | Every 15 min until 20:00 | Levels from yesterday's high, low and close: follow strong breakouts, and catch moves that fail at the day's extremes. In the 4-hour trend's direction. | $52 |
+| **Momentum at 16:00** | 15-min | One decision at 16:00 | The way gold has moved since the open tends to carry on into the US afternoon (Gao, Han, Li & Zhou, 2018). In the 4-hour trend's direction. | $53 |
+| **Momentum at 20:00** | 15-min | One decision at 20:00 | The same momentum idea, later in the day. | $52 |
 
 All six intraday strategies close their trades by **23:00 broker time** (16:00 New York), before
 the daily rollover. The exact entry, stop and exit rules are in [`docs/DESIGN.md`](docs/DESIGN.md)
@@ -135,20 +135,27 @@ trade means it made, on average, 5% of what it risked.
 | Momentum at 16:00 | 2,651 | +0.027 | +47.3 R | −17.2 R | +41.9 R |
 | Momentum at 20:00 | 2,842 | +0.015 | +18.5 R | +5.1 R | +18.2 R |
 
-The intraday robot as a whole, at today's risk levels, starting from 10,000 in each period:
+The intraday robot as a whole, starting from 10,000 in each period. The robots trade the fixed size
+since the end of October 2026; the left columns are the earlier percent-of-account sizing (0.125% to
+0.25% a trade), the right ones replay the same trades at 0.01 lots:
 
-| Period | Growth | Worst drawdown |
-|---|---:|---:|
-| 2008–2014 | +66.9% | 10.7% |
-| 2015–2022 | +2.8% | 17.7% |
-| 2023–2026 | +31.2% | 6.7% |
+| Period | Growth, percent sizing | Worst drawdown | Growth, 0.01 lots | Worst drawdown |
+|---|---:|---:|---:|---:|
+| 2008–2014 | +66.9% | 10.7% | +29.7% | 3.7% |
+| 2015–2022 | +2.8% | 17.7% | +4.2% | 6.9% |
+| 2023–2026 | +31.2% | 6.7% | +37.7% | 5.8% |
+| Apr–Oct 2026 only | +2.3% | 2.4% | +6.7% | 5.7% |
+
+One ounce was a much smaller bet when gold cost $1,000 than it is at $4,000, so the older 0.01-lot
+rows understate today's risk. The last row is the closest to what the robot does now.
 
 What these numbers mean:
 
 - **The H4 swing breakout made money in every period.** It is the most dependable part.
 - **New York opening range and Momentum at 16:00 depend on the market.** They earn well in lively
-  years and lose in quiet ones, so they now trade at half risk (0.125%). That choice was made after
-  seeing these results, which flatters the combined figures a little.
+  years and lose in quiet ones. They traded at half risk under percent sizing, a choice made after
+  seeing these results, which flatters the left-hand columns a little. At the fixed size they trade
+  like the others.
 - **The edge per trade is small.** Most intraday strategies make a few hundredths of an R a trade.
   It only shows over hundreds of trades, and any few weeks can be negative.
 
@@ -172,9 +179,11 @@ Both robots enforce these in code:
 
 - **Demo account only.** They refuse to run on a real-money account.
 - **Gold only.** They refuse any other chart.
-- **Every order has its stop loss at the broker** from the moment it opens.
+- **Every order has its stop loss and take-profit at the broker** from the moment it opens. The stop
+  limits what a trade can lose; the take-profit only banks a gain. Its level for each strategy was
+  chosen on 2023-24 data (`research/tp_lab.js`).
 - **One position per strategy.** No adding to losing trades, no martingale, no doubling up.
-- **Fixed risk per trade** as in the table above.
+- **Fixed size:** 0.01 lots a trade, never less. What a trade can lose is the distance to its stop.
 - **Intraday trades close by 23:00 broker time**, so they pay no overnight swap.
 - **Daily loss limit:** no new intraday trades after the account falls 2% in one day.
 - **Emergency stop:** in MetaTrader press F3, then add a global variable `DG_KILL` with value 1.

@@ -3,8 +3,8 @@
  *
  *   node research/parity_mt5.js [path to DonchianGold_journal.csv]
  *
- * Reads the journal the EA writes during a Strategy Tester run (H4, open prices
- * only) and compares every trade's entry bar, side, exit bar and exit reason
+ * Reads the journal the EA writes during a Strategy Tester run (H4, 1 minute OHLC,
+ * so its take-profit fires inside the bar) and compares every trade's entry bar, side, exit bar and exit reason
  * with research/daytrade.js ("H4, hold overnight, both") on data/XAUUSD.sml_H1.csv.
  * Without a path it finds the newest tester journal under %APPDATA%\MetaQuotes\Tester.
  */
@@ -61,7 +61,7 @@ if (!ea.length) { console.log('The journal has no completed trades.'); process.e
 
 const bars = R.toH4(R.load('XAUUSD.sml_H1.csv'));
 const cfg = { dir: 'both', N: 20, M: 10, k: 2, ema: 100, maxBars: 60, barMin: 240, flat: false,
-              swapLong: -5.92, swapShort: 3.67, hardK: 4, firstEntryMin: 0, lastEntryMin: 24 * 60, flatMin: Infinity,
+              swapLong: -5.92, swapShort: 3.67, hardK: 4, targetR: 1.5, targetWait: true, firstEntryMin: 0, lastEntryMin: 24 * 60, flatMin: Infinity,
               from: -Infinity, to: Infinity };
 // Compare from 3 months after the EA's first decision: before that, the EMA seeds differ
 // (the tester has older history than the exported file).
@@ -92,6 +92,6 @@ onlyEa.slice(0, 8).forEach(t => console.log('  EA only       ' + side(t.side) + 
 onlyRes.slice(0, 8).forEach(t => console.log('  research only ' + side(t.side) + ' ' + d(t.t)));
 const count = re => rows.filter(r => re.test(r.ev)).length;
 console.log('Journal: ' + count(/^ERROR$/) + ' error rows, ' + count(/^SKIP$/) + ' skipped entries, ' +
-            count(/^EXIT_HARDSTOP$/) + ' broker-stop exits, ' + count(/^EXIT_(MANUAL|EXTERNAL|STOPOUT)$/) + ' closes from outside the EA');
+            count(/^EXIT_HARDSTOP$/) + ' broker-stop exits, ' + count(/^EXIT_TARGET$/) + ' take-profits, ' + count(/^EXIT_(MANUAL|EXTERNAL|STOPOUT)$/) + ' closes from outside the EA');
 const pct = eaIn.length ? same / Math.max(eaIn.length, res.length) * 100 : 0;
 console.log('\nParity: ' + pct.toFixed(1) + '% of trades identical' + (pct >= 95 ? ' → PASS' : ' → investigate the differences above'));

@@ -101,7 +101,7 @@ function backtest(bars, S, cost) {
     const risk = (fill - stop) * side;
     if (!(risk > 0)) return;                               // gapped past its own stop: no trade
     pos = { side, t: bars[i].t, entryBar: i, entry: fill, stop, risk, viaStop, level: spec.level,
-            target: spec.targetR ? fill + side * spec.targetR * risk : null, reverse: spec.reverse };
+            target: spec.targetR ? fill + side * spec.targetR * risk : null, targetR: spec.targetR, reverse: spec.reverse };
     dayTrades++;
   }
   function exit(i, raw, why, isLimit) {
@@ -146,7 +146,7 @@ function backtest(bars, S, cost) {
         const px = fresh ? p.stop : p.side === 1 ? Math.min(k.o, p.stop) : Math.max(k.o + k.sp, p.stop);
         exit(i, px, 'STOP');
         if (p.reverse && dayTrades < S.maxPerDay && m < (S.entryUntil || S.flatMin))
-          enter(-p.side, px, i, { stop: p.level, level: p.stop, reverse: true }, true);
+          enter(-p.side, px, i, { stop: p.level, level: p.stop, reverse: true, targetR: p.targetR }, true);
       } else if (p.target !== null && !(fresh && p.viaStop) &&
                  (p.side === 1 ? k.h >= p.target : k.l + k.sp <= p.target)) {
         exit(i, fresh ? p.target : p.side === 1 ? Math.max(k.o, p.target) : Math.min(k.o + k.sp, p.target), 'TARGET', true);
@@ -454,6 +454,19 @@ if (require.main === module) {
   });
 }
 
+/** Each strategy's take-profit at the broker, x its stop distance. Chosen on 2023-2024 only: research/tp_lab.js. */
+const TARGETS = { NY_ORB: 4, ASIAN_NARROW: 1.5, DUAL_THRUST: 1.5, R_BREAKER: 3, MOM_16: 1.5, MOM_20: 1.5 };
+function withTarget(S, targetR) {
+  const add = d => {
+    if (!d) return d;
+    const x = Object.assign({}, d);
+    if (x.orders) x.orders = x.orders.map(o => Object.assign({}, o, { targetR }));
+    if (x.enter) x.enter = Object.assign({}, x.enter, { targetR });
+    return x;
+  };
+  return Object.assign({}, S, { onDay: S.onDay && (i => add(S.onDay(i))), onClose: S.onClose && ((i, pos, D, n) => add(S.onClose(i, pos, D, n))) });
+}
+
 /** The portfolio the EA trades (mt5/GoldIntraday.mq5), keyed by the EA's strategy names. */
 const PORTFOLIO = {
   NY_ORB: 'New York ORB (16:30-17:00), out at session end + H4 trend',
@@ -467,8 +480,8 @@ function portfolio(bars) {
   const trend = h4Trend(bars), S0 = strategies(bars);
   const all = S0.concat(S0.filter(s => s.family !== 'mean reversion').map(s => withTrend(s, trend)));
   const out = {};
-  Object.keys(PORTFOLIO).forEach(id => { out[id] = all.find(s => s.name === PORTFOLIO[id]); });
+  Object.keys(PORTFOLIO).forEach(id => { out[id] = withTarget(all.find(s => s.name === PORTFOLIO[id]), TARGETS[id]); });
   return out;
 }
 
-module.exports = { backtest, strategies, h4Trend, withTrend, portfolio, PORTFOLIO, stats, threeWeeks, ema, rsi, atr, bollinger, dailyOf, COSTS, SPLIT };
+module.exports = { backtest, strategies, h4Trend, withTrend, withTarget, portfolio, PORTFOLIO, TARGETS, stats, threeWeeks, ema, rsi, atr, bollinger, dailyOf, COSTS, SPLIT };

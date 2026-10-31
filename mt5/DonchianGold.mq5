@@ -9,7 +9,8 @@
 //| the MT5 Strategy Tester against that script.                     |
 //|                                                                  |
 //| Safety (CLAUDE.md rule 1): refuses to run on a non-demo account, |
-//| every order carries a broker stop loss, one position at a time,  |
+//| every order carries a broker stop loss and take-profit, one      |
+//| position at a time,                                              |
 //| no averaging down, no martingale, daily loss limit, kill switch. |
 //|                                                                  |
 //| Gold closes for about an hour at server midnight, so the 00:00   |
@@ -19,7 +20,7 @@
 //| journaled as such.                                               |
 //+------------------------------------------------------------------+
 #property copyright   "Donchian Analyst (personal research)"
-#property version     "1.01"
+#property version     "1.03"
 #property description "Donchian breakout on gold, long and short. Demo accounts only."
 
 #include <Trade\Trade.mqh>
@@ -37,9 +38,11 @@ input bool            InpAllowLong  = true;      // Take long breakouts
 input bool            InpAllowShort = true;      // Take short breakdowns
 
 input group "Risk limits"
-input double InpRiskPct      = 1.0;  // % of equity lost if the strategy stop is hit
+input double InpFixedLots    = 0.01; // Every trade's size in lots (minimum 0.01); 0 = size by the risk % below
+input double InpRiskPct      = 1.0;  // % of equity lost if the strategy stop is hit (only when the fixed size is 0)
 input double InpMaxLeverage  = 2.0;  // Position value capped at equity x this
 input double InpHardStopAtr  = 4.0;  // Broker stop loss, ATRs from the fill (catastrophe stop)
+input double InpTpR          = 1.5;  // Take-profit at the broker, x the strategy stop; 0 = none (must match research/parity_mt5.js)
 input double InpDailyLossPct = 3.0;  // No new entries after equity falls this % in a server day
 input int    InpMaxTradesDay = 2;    // Max entries per server day
 
@@ -203,6 +206,7 @@ void ReportOutsideClose(const int pendingExit)
          if(d == 0 || (entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_OUT_BY)) continue;
          long reason = HistoryDealGetInteger(d, DEAL_REASON);
          if(reason == DEAL_REASON_SL) ev = "EXIT_HARDSTOP";
+         else if(reason == DEAL_REASON_TP) { ev = "EXIT_TARGET"; GVSet("tp_wait", GVGet("side", 0)); }
          else if(reason == DEAL_REASON_SO) ev = "EXIT_STOPOUT";
          else if(reason == DEAL_REASON_CLIENT || reason == DEAL_REASON_MOBILE || reason == DEAL_REASON_WEB) ev = "EXIT_MANUAL";
          else if(reason == DEAL_REASON_EXPERT && pendingExit > 0) ev = ExitName(pendingExit);   // our retried close went through
@@ -241,10 +245,19 @@ bool OpenPosition(const int dir, const double atr, const datetime sigBar)
    if(tickSize <= 0 || tickVal <= 0 || contract <= 0 || price <= 0 || stopDist <= 0)
       return true;                                                 // symbol data not ready yet
 
-   double lots = eq * InpRiskPct / 100.0 / (stopDist / tickSize * tickVal);    // 1% of equity to the strategy stop
-   lots = MathMin(lots, eq * InpMaxLeverage / (price * contract));              // leverage cap
    double step = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
-   lots = MathMin(MathFloor(lots / step) * step, SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX));
+   double lots;
+   if(InpFixedLots > 0)                                            // the fixed size; over the leverage cap it is not traded, not cut
+     {
+      lots = MathRound(InpFixedLots / step) * step;
+      if(lots * price * contract > eq * InpMaxLeverage) { Journal("SKIP", "fixed size above the leverage cap"); return false; }
+     }
+   else
+     {
+      lots = eq * InpRiskPct / 100.0 / (stopDist / tickSize * tickVal);          // 1% of equity to the strategy stop
+      lots = MathFloor(MathMin(lots, eq * InpMaxLeverage / (price * contract)) / step) * step;   // leverage cap
+     }
+   lots = MathMin(lots, SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX));
    if(lots < SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN)) { Journal("SKIP", "position size below the minimum volume"); return false; }
 
    double margin = 0;
@@ -256,8 +269,9 @@ bool OpenPosition(const int dir, const double atr, const datetime sigBar)
    double minStop = (double)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) * _Point;
    double hard = MathMax(InpHardStopAtr * atr, minStop + 10 * _Point);
    double sl = NormalizeDouble(dir == 1 ? price - hard : price + hard, _Digits);
+   double tp = InpTpR > 0 ? NormalizeDouble(price + dir * InpTpR * stopDist, _Digits) : 0;
 
-   bool ok = dir == 1 ? trade.Buy(lots, _Symbol, 0, sl, 0, "DG long") : trade.Sell(lots, _Symbol, 0, sl, 0, "DG short");
+   bool ok = dir == 1 ? trade.Buy(lots, _Symbol, 0, sl, tp, "DG long") : trade.Sell(lots, _Symbol, 0, sl, tp, "DG short");
    if(!ok || trade.ResultRetcode() != TRADE_RETCODE_DONE)
      {
       uint rc = trade.ResultRetcode();
@@ -281,7 +295,9 @@ bool OpenPosition(const int dir, const double atr, const datetime sigBar)
    Journal(dir == 1 ? "ENTRY_LONG" : "ENTRY_SHORT",
            DoubleToString(lots, 3) + " lots at " + DoubleToString(fill, _Digits) +
            ", strategy stop " + DoubleToString(fill - dir * stopDist, _Digits) +
-           ", broker stop " + DoubleToString(sl, _Digits) + ", risk " + DoubleToString(InpRiskPct, 2) + "%");
+           ", broker stop " + DoubleToString(sl, _Digits) + ", risk " +
+           (InpFixedLots > 0 ? "$" + DoubleToString(lots * stopDist / tickSize * tickVal, 2) : DoubleToString(InpRiskPct, 2) + "%") +
+           (tp > 0 ? ", take-profit " + DoubleToString(tp, _Digits) : ""));
    return false;
   }
 
@@ -352,6 +368,10 @@ void Run()
                 " ch " + DoubleToString(lo, _Digits) + "-" + DoubleToString(hi, _Digits) +
                 " exit " + DoubleToString(xlo, _Digits) + "-" + DoubleToString(xhi, _Digits);
 
+   // After a take-profit that side waits for a close back inside the entry channel: the same breakout is not a new one.
+   int wait = (int)GVGet("tp_wait", 0);
+   if((wait == 1 && c <= hi) || (wait == -1 && c >= lo)) { GVDel("tp_wait"); wait = 0; }
+
    if(has)
      {
       // State lost (crash before it was saved, new PC): rebuild it from the position itself.
@@ -391,9 +411,9 @@ void Run()
      }
 
    int dir = 0;
-   if(InpAllowLong && c > hi && c > ema) dir = 1;
-   else if(InpAllowShort && c < lo && c < ema) dir = -1;
-   Journal("BAR", bar + " | FLAT" + (dir == 1 ? " | long signal" : dir == -1 ? " | short signal" : ""));
+   if(InpAllowLong && c > hi && c > ema && wait != 1) dir = 1;
+   else if(InpAllowShort && c < lo && c < ema && wait != -1) dir = -1;
+   Journal("BAR", bar + " | FLAT" + (dir == 1 ? " | long signal" : dir == -1 ? " | short signal" : "") + (wait != 0 ? " | waiting after a take-profit" : ""));
    if(dir == 0) return;
 
    string reason = "";
@@ -415,6 +435,9 @@ int OnInit()
       Alert("DonchianGold trades gold only; it is attached to " + _Symbol + ". Attach it to an XAUUSD chart.");
       return INIT_FAILED;
      }
+   if(InpFixedLots != 0 && InpFixedLots < 0.01)
+      return INIT_PARAMETERS_INCORRECT;                            // a fixed size is never below 0.01 lots
+   if(InpTpR < 0) return INIT_PARAMETERS_INCORRECT;
    if(InpBreakout < 2 || InpExit < 1 || InpEmaPeriod < 2 || InpAtrPeriod < 1 ||
       InpCalcBars < InpEmaPeriod + InpBreakout + 10 || InpRiskPct <= 0 || InpRiskPct > 2 || InpStopAtr <= 0)
       return INIT_PARAMETERS_INCORRECT;                            // risk above 2% is refused outright
@@ -425,8 +448,8 @@ int OnInit()
    GVDel("entry_err"); GVDel("exit_err");                           // report a problem that is still there after a restart
    EventSetTimer(30);
    Journal("START", _Symbol + " " + EnumToString(InpTimeframe) + ", long " + (InpAllowLong ? "on" : "off") +
-           ", short " + (InpAllowShort ? "on" : "off") + ", risk " + DoubleToString(InpRiskPct, 2) +
-           "%, demo account " + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)));
+           ", short " + (InpAllowShort ? "on" : "off") + (InpFixedLots > 0 ? ", fixed " + DoubleToString(InpFixedLots, 3) + " lots" : ", risk " + DoubleToString(InpRiskPct, 2) + "%") + ", take-profit " + DoubleToString(InpTpR, 1) + "R" +
+           ", demo account " + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)));
    return INIT_SUCCEEDED;
   }
 

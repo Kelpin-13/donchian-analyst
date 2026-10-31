@@ -321,8 +321,31 @@ ok(glanceRow('New York opening range')[2] === '22:00–01:00' && glanceRow('Mome
 ok(cards === 7 && stratRows.some(r => r && /closed by 04:00 \(broker 23:00\)/.test(String(r[1]))), 'one card per strategy (7), with both clocks in the details');
 ok(M.run('MT5_STRATEGIES').every(st => st.name && st.idea && st.entry && st.stop && st.exit && st.trades > 0 && st.eras.length === 3),
    'every strategy is fully described, with its 18-year record in three eras');
-ok(glanceRow('New York opening range')[4] === '0.125%' && glanceRow('Dual Thrust')[6] === 93 && glanceRow('Dual Thrust')[7] === '3 of 3',
-   'at a glance: half risk where it applies, 18-year result and eras positive');
+ok(glanceRow('New York opening range')[4] === '$20' && glanceRow('Dual Thrust')[4] === '$126' && glanceRow('Dual Thrust')[6] === 93 && glanceRow('Dual Thrust')[7] === '3 of 3',
+   'at a glance: what each stop usually costs at the fixed size, 18-year result and eras positive');
+const FX = world({ markets: MARKETS, props: { MT5_KEY: 'mk' } });
+FX.run('doPost(' + JSON.stringify({ postData: { contents: JSON.stringify(Object.assign({}, base, { ea: 'GoldIntraday', lines: [
+  '2026.11.02 01:05:00,ALL,START,10000.00,XAUUSD.sml, fixed 0.010 lots a trade, strategies DUAL_THRUST, demo account 1',
+  '2026.11.02 10:49:02,DUAL_THRUST,ENTRY_SHORT,10000.00,stop order filled: 0.010 lots at 3977.755, stop 4067.238, risk $89.48, opened 2026.11.02 10:49:02',
+  '2026.11.02 23:00:00,DUAL_THRUST,EXIT_SESSION,10008.95,closed at 3968.807, deal time 2026.11.02 23:00:00, profit 8.95'] })) } }) + ')');
+const fxTrade = JSON.parse(FX.run('JSON.stringify(mt5BuildTrades_(mt5ReadLog_()).trades)'))[0];
+ok(fxTrade && fxTrade.lots === 0.01 && fxTrade.entry === 3977.755 && fxTrade.stop === 4067.238 && fxTrade.r === 0.1 && fxTrade.pnl === 8.95,
+   'a fixed-size journal line (risk in dollars) still gives the right lots, entry, stop, R and profit');
+const TP = world({ markets: MARKETS, props: { MT5_KEY: 'mk' } });
+TP.run('doPost(' + JSON.stringify({ postData: { contents: JSON.stringify(Object.assign({}, base, { ea: 'GoldIntraday', lines: [
+  '2026.11.02 10:49:02,DUAL_THRUST,ENTRY_SHORT,10000.00,stop order filled: 0.010 lots at 4000.000, stop 4100.000, risk $100.00, opened 2026.11.02 10:49:02, take-profit 3850.000',
+  '2026.11.02 15:00:00,DUAL_THRUST,EXIT_TARGET,10150.00,closed at 3850.000, deal time 2026.11.02 15:00:00, profit 150.00'] })) } }) + ')');
+const tpTrade = JSON.parse(TP.run('JSON.stringify(mt5BuildTrades_(mt5ReadLog_()).trades)'))[0];
+ok(tpTrade && tpTrade.stop === 4100 && tpTrade.r === 1.5 && tpTrade.pnl === 150 && tpTrade.reason === 'Take-profit',
+   'a take-profit exit reads as one, and the take-profit price is not mistaken for the stop or the profit');
+const targets = require('../research/intraday.js').TARGETS, gi = fs.readFileSync(path.join(__dirname, '..', 'mt5', 'GoldIntraday.mq5'), 'utf8');
+const eaTp = name => +(new RegExp('input double ' + name + '\\s*=\\s*([\\d.]+)').exec(gi) || [])[1];
+ok(eaTp('InpTpNyOrb') === targets.NY_ORB && eaTp('InpTpAsian') === targets.ASIAN_NARROW && eaTp('InpTpDualThrust') === targets.DUAL_THRUST &&
+   eaTp('InpTpRBreaker') === targets.R_BREAKER && eaTp('InpTpMom16') === targets.MOM_16 && eaTp('InpTpMom20') === targets.MOM_20,
+   'the intraday EA\'s take-profit inputs match the research');
+ok(/input double InpTpR\s*=\s*1\.5;/.test(fs.readFileSync(path.join(__dirname, '..', 'mt5', 'DonchianGold.mq5'), 'utf8')) &&
+   /targetR: 1\.5, targetWait: true/.test(fs.readFileSync(path.join(__dirname, '..', 'research', 'parity_mt5.js'), 'utf8')),
+   'the H4 EA\'s take-profit input matches the parity check');
 
 section('Switching the old system off');
 const O2 = world({ markets: MARKETS, props: { MT5_KEY: 'mk' }, triggers: ['runMonitor', 'runChallenger', 'runDailyBrief'] });
