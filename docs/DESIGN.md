@@ -413,3 +413,27 @@ pending until they are done, and GoldIntraday holds its stop orders and cancels 
   stage. Fed the real M1 history 2023-2026 that way, the old and new builds made the same trades at the same times and
   prices; that replay matched the real tester run's entries at 100% (H4) and 99.8% (intraday) of them. Only the wording
   moves: fewer failed attempts in an exit row, and in GoldIntraday one ERROR row per closed market, not one per strategy.
+- DonchianGold writes the decided bar and a pending entry to disk at once, so a crash cannot decide that bar again. It also waits up to a minute for a position's closing deal to reach the terminal, because the wait after a take-profit depends on seeing it.
+- **DonchianGold skips an entry it missed.** More than 15 minutes after its bar's first price, an entry ends in a SKIP
+  row instead of an order, whether it is a new decision or a retry. Exits always go, and the next bar decides as usual.
+  7 of the first 23 live decisions came over an hour late, after the PC or MT5 had been off, one by 239 minutes; the
+  research only measures entries at the bar's first price, and GoldIntraday never chased. It is measured from the first
+  M1 bar inside the bar, because the open time misleads: the 00:00 bar's first price comes about an hour later. The
+  longest genuine wait in 2023-2026 is 2 minutes, so a run with no restarts should not change: in the replay every bar
+  is decided within a minute of its first price. A closed market is asked about first, so a pending entry over a weekend
+  still waits for Monday's SKIP row. Price moves little from the fill in that time (typically 0.07 of the stop after 15
+  minutes, 0.25 after 4 hours, on the 199 entries of 2023-2026) and its average drift is close to zero, so this keeps
+  live trading on the tested rules; it is not a measured gain.
+- **Both EAs give MT5 a minute to catch up.** After a start, a sleep (no `Run()` for over 90 seconds) or a lost
+  connection, nothing that reads bars runs for 60 seconds, or longer if `SERIES_SYNCHRONIZED` says MT5 isn't done, up to
+  5 minutes. Of DonchianGold's 18 live decisions that could be checked against the full history, 3 used holes: 2 in the
+  very second it started (29 Oct 2026, after 13 days off: channel low 4015.9, really 3988.9; EMA 4172, really 4102) and 1
+  straight after a sleep (EMA 0.7 off). No order came from them, but any could have. GoldIntraday works out a day's levels
+  once and keeps them all day, so a hole at that moment would last until the next day: at that same start its Dual Thrust
+  levels were 4017.108-4114.212, really 4019.820-4111.500, put right only by a reload 18 seconds later. That also shows
+  how quickly those 13 days were filled. The time comes first because the flag alone can't be trusted: forum tests show
+  it reading true with data missing. What reads no bars never waits: an exit already decided, the kill switch, reports of
+  fills and outside closes, and in GoldIntraday flat at 23:00. An exit that still needs a bar's numbers waits with the
+  broker's stop in place, and GoldIntraday's resting orders are left alone until then. The tester skips all of this. Fed
+  the M1 history with the timer running, each EA's live path made the same journal as its tester path. A real restart
+  has not tested it yet.

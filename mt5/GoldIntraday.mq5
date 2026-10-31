@@ -21,13 +21,15 @@
 //| loss limit, kill switch (global variable DG_KILL = 1, shared    |
 //| with DonchianGold). Everything it needs is rebuilt from prices   |
 //| and the account on a restart. After a "market closed" reply      |
-//| nothing is sent until gold has a newer quote.                    |
+//| nothing is sent until gold has a newer quote. After a start or   |
+//| an outage no bar is read for a minute, so MT5 can fill its       |
+//| history.                                                         |
 //|                                                                  |
 //| Parity: research/parity_intraday.js after a Strategy Tester run  |
 //| (M15, 1 minute OHLC).                                            |
 //+------------------------------------------------------------------+
 #property copyright   "Donchian Analyst (personal research)"
-#property version     "1.13"
+#property version     "1.14"
 #property description "Six intraday gold strategies, flat before the rollover. Demo accounts only."
 
 #include <Trade\Trade.mqh>
@@ -72,6 +74,9 @@ input int    InpDeviationPts = 50;       // Max price deviation for market order
 string NAMES[NS]  = { "ALL", "NY_ORB", "ASIAN_NARROW", "DUAL_THRUST", "R_BREAKER", "MOM_16", "MOM_20" };
 int    MAXDAY[NS] = { 0, 1, 1, 3, 2, 1, 1 };       // entries per server day, as in the research
 const int FLAT = 23 * 60;                           // flat from 23:00 server time, an hour before the rollover
+// How long nothing that reads bars runs after a start, a sleep or a lost connection, and the most that can stretch to.
+const int HISTORY_SETTLE_SEC = 60;
+const int HISTORY_SETTLE_MAX_SEC = 300;
 string JOURNAL = "GoldIntraday_journal.csv";        // in the tester: one file per run, named by its start date
 
 CTrade trade;
@@ -120,6 +125,8 @@ bool     g_noChase = false;            // armed mid-bar after a start: a level a
 // (its time in ms; -1 = not waiting).
 long     g_waitQuote = -1;
 bool     g_waitSaid = true;            // the journal already says why orders wait
+datetime g_settleFrom = 0;             // the last start, sleep or lost connection: MT5 has been catching up on bars since then
+datetime g_lastRun = 0;                // the timer runs Run() every 10 seconds, so a long pause here means the PC slept
 
 //--- small helpers ----------------------------------------------------------
 double GVGet(const string name, const double def) { string k = GVP + name; return GlobalVariableCheck(k) ? GlobalVariableGet(k) : def; }
@@ -221,6 +228,25 @@ void NoteRefusal(const uint rc)
    if(rc != TRADE_RETCODE_MARKET_CLOSED) return;
    g_waitQuote = LastQuoteMs();
    g_waitSaid = true;                                          // the failure's journal row says so
+  }
+
+//--- history: MT5 needs a moment to catch up after an outage -----------------
+// Bars read at once can come from a history with holes in it, and a day's levels are then kept all day. On 29 Oct 2026,
+// after 13 days off, the first Dual Thrust levels were 4017.108-4114.212, really 4019.820-4111.500. Those 13 days were
+// filled within 18 seconds. MT5's own flag can't be the only check: it can read true with data still missing.
+void NoteOutage()
+  {
+   datetime now = TimeLocal();
+   if(now - g_lastRun > 90 || !TerminalInfoInteger(TERMINAL_CONNECTED)) g_settleFrom = now;
+   g_lastRun = now;
+  }
+
+// True while nothing that reads bars should run. Capped, so a flag that never clears can't leave the EA quiet.
+bool HistorySettling()
+  {
+   if(MQLInfoInteger(MQL_TESTER)) return false;                // the tester has no restarts and a complete history
+   long since = TimeLocal() - g_settleFrom;
+   return since < HISTORY_SETTLE_SEC || (since < HISTORY_SETTLE_MAX_SEC && !SeriesInfoInteger(_Symbol, PERIOD_M15, SERIES_SYNCHRONIZED));
   }
 
 //--- indicators, identical to research/intraday.js ---------------------------
@@ -499,7 +525,7 @@ int PlaceStop(const int k, const int s, const Want &w)
       return 0;
      }
    NoteRefusal(rc);
-   if(rc != TRADE_RETCODE_MARKET_CLOSED) JournalFailure(k, (dir == 1 ? "buy" : "sell") + " stop order");   // closed: the 01:00 open, expected
+   if(rc != TRADE_RETCODE_MARKET_CLOSED) JournalFailure(k, (dir == 1 ? "buy" : "sell") + " stop order");   // closed: before orders open at 01:05, expected
    return Transient(rc) ? 3 : 2;
   }
 
@@ -785,6 +811,7 @@ void StandDown()
 void Run()
   {
    if(!IsDemo()) { Alert("GoldIntraday: not a demo account. Removing the EA."); ExpertRemove(); return; }
+   NoteOutage();
    datetime now = TimeCurrent();
    if(now == 0) return;
    if(g_tradesDay != DayOf(now)) CountTrades();
@@ -809,6 +836,7 @@ void Run()
       else if(g_exitWhy[k] != "") CloseStrat(k, g_exitWhy[k]);
      }
    if(m >= flat) { StandDown(); return; }
+   if(HistorySettling()) return;                               // everything above needs no bars, so it never waits
 
    // A new M15 bar: decide on the bar that just closed, then set this bar's breakout orders.
    datetime cur = iTime(_Symbol, PERIOD_M15, 0);
@@ -888,6 +916,7 @@ int OnInit()
    g_armed = false; g_noChase = false;
    g_waitQuote = LastQuoteMs();                                // nothing goes out on a quote from before this start
    g_waitSaid = false;
+   g_settleFrom = g_lastRun = TimeLocal();                     // MT5 may still be catching up on bars
    EventSetTimer(10);
    Journal(0, "START", _Symbol + (InpFixedLots > 0 ? ", fixed " + DoubleToString(InpFixedLots, 3) + " lots" : ", risk " + DoubleToString(InpRiskPct, 2) + "%") + " a trade, strategies" +
            (InpNyOrb ? " NY_ORB" : "") + (InpAsian ? " ASIAN_NARROW" : "") + (InpDualThrust ? " DUAL_THRUST" : "") +

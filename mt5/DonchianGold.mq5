@@ -16,12 +16,14 @@
 //| Gold closes for about an hour at server midnight and for the     |
 //| weekend, so orders can meet "market closed": an entry stays      |
 //| pending until its bar ends, an exit until it is done, and nothing|
-//| is sent again until gold has a newer quote. A position closed    |
-//| by anything but this EA (broker stop, stop-out, a human) is      |
-//| journaled as such.                                               |
+//| is sent again until gold has a newer quote. An entry later than  |
+//| 15 minutes into its bar is skipped, never chased; exits always   |
+//| go. After a start or an outage no bar is decided for a minute,   |
+//| so MT5 can fill its history. A position closed by anything but   |
+//| this EA (broker stop, stop-out, a human) is journaled as such.   |
 //+------------------------------------------------------------------+
 #property copyright   "Donchian Analyst (personal research)"
-#property version     "1.04"
+#property version     "1.05"
 #property description "Donchian breakout on gold, long and short. Demo accounts only."
 
 #include <Trade\Trade.mqh>
@@ -57,10 +59,19 @@ string GVP;                    // global-variable prefix, per magic number
 const string JOURNAL = "DonchianGold_journal.csv";
 // Exit reasons, stored by index while an exit waits to be retried (0 = none pending).
 string EXIT_NAMES[] = { "", "EXIT_STOP", "EXIT_CHANNEL", "EXIT_TIME", "KILL_SWITCH", "EXIT_RETRY" };
+// Later than this into its bar an entry was missed, not delayed (PC off, connection lost): the research only measures
+// entries at the bar's first price. The longest genuine wait in 2023-2026 is 2 minutes (quotes at 01:03, orders at 01:05).
+const int ENTRY_LATE_MIN = 15;
+// How long nothing that reads bars runs after a start, a sleep or a lost connection, and the most that can stretch to.
+const int HISTORY_SETTLE_SEC = 60;
+const int HISTORY_SETTLE_MAX_SEC = 300;
 // Set at start-up and on a "market closed" reply: nothing is sent until gold has a quote newer than this one
 // (its time in ms; -1 = not waiting).
 long   g_waitQuote = -1;
 bool   g_waitSaid  = true;     // the journal already says why orders wait
+datetime g_dealWaitFrom = 0;   // when a position was first seen gone with its closing deal not in the history yet
+datetime g_settleFrom = 0;     // the last start, sleep or lost connection: MT5 has been catching up on bars since then
+datetime g_lastRun = 0;        // the timer runs Run() every 30 seconds, so a long pause here means the PC slept
 
 //--- persistent state: terminal global variables survive restarts --------
 double GVGet(const string name, const double def) { string k = GVP + name; return GlobalVariableCheck(k) ? GlobalVariableGet(k) : def; }
@@ -131,6 +142,26 @@ void NoteRefusal(const uint rc)
    if(rc != TRADE_RETCODE_MARKET_CLOSED) return;
    g_waitQuote = LastQuoteMs();
    g_waitSaid = true;                                              // its ERROR row says so
+  }
+
+//--- history: MT5 needs a moment to catch up after an outage -------------
+// Bars decided at once can use a history with holes in it, and an order or an exit can follow from the wrong numbers.
+// Of 18 live decisions checked against the full history 3 did: 2 in the very second the EA started (29 Oct 2026, after
+// 13 days off: channel low 4015.9, really 3988.9) and 1 straight after a sleep. Those 13 days were filled within 18
+// seconds. MT5's own flag can't be the only check: it can read true with data still missing.
+void NoteOutage()
+  {
+   datetime now = TimeLocal();
+   if(now - g_lastRun > 90 || !TerminalInfoInteger(TERMINAL_CONNECTED)) g_settleFrom = now;
+   g_lastRun = now;
+  }
+
+// True while nothing that reads bars should run. Capped, so a flag that never clears can't leave the EA quiet.
+bool HistorySettling()
+  {
+   if(MQLInfoInteger(MQL_TESTER)) return false;                   // the tester has no restarts and a complete history
+   long since = TimeLocal() - g_settleFrom;
+   return since < HISTORY_SETTLE_SEC || (since < HISTORY_SETTLE_MAX_SEC && !SeriesInfoInteger(_Symbol, InpTimeframe, SERIES_SYNCHRONIZED));
   }
 
 //--- indicators, identical to Indicator.js -------------------------------
@@ -225,11 +256,13 @@ void ClosePosition(const ulong ticket, const string why)
      }
   }
 
-// Our position is gone but this EA didn't close it: say who did, from the closing deal.
-void ReportOutsideClose(const int pendingExit)
+// Our position is gone but this EA didn't close it: say who did, from the closing deal. Returns false while that
+// deal may still be on its way to the terminal: a take-profit's wait depends on seeing it.
+bool ReportOutsideClose(const int pendingExit)
   {
    ulong posid = (ulong)GVGet("posid", 0);
    string ev = "EXIT_EXTERNAL", detail = "position closed outside the EA; closing deal not found";
+   bool found = false;
    if(posid > 0 && HistorySelectByPosition(posid))
       for(int i = HistoryDealsTotal() - 1; i >= 0; i--)
         {
@@ -244,11 +277,19 @@ void ReportOutsideClose(const int pendingExit)
          else if(reason == DEAL_REASON_EXPERT && pendingExit > 0) ev = ExitName(pendingExit);   // our retried close went through
          detail = "ticket " + IntegerToString((long)posid) + " closed at " + DoubleToString(HistoryDealGetDouble(d, DEAL_PRICE), _Digits) +
                   ", deal time " + TimeToString((datetime)HistoryDealGetInteger(d, DEAL_TIME), TIME_DATE | TIME_SECONDS);
+         found = true;
          break;
         }
+   if(!found && posid > 0)
+     {
+      if(g_dealWaitFrom == 0) g_dealWaitFrom = TimeLocal();
+      if(TimeLocal() - g_dealWaitFrom < 60) return false;
+     }
+   g_dealWaitFrom = 0;
    if(posid > 0) detail += ", profit " + DoubleToString(PositionPnl(posid), 2);
    Journal(ev, detail);
    ClearTradeState();
+   return true;
   }
 
 //--- entry limits: daily loss, trades per day ---------------------------
@@ -263,12 +304,29 @@ bool EntryAllowed(string &reason)
    return true;
   }
 
+// Minutes since the bar in progress had its first price. Not since its open time: gold's first price of a day comes
+// about an hour after the 00:00 bar opens, later after a holiday. 0 if MT5 can't say: the entry goes, as it always did.
+int MinutesIntoBar()
+  {
+   long quote = LastQuoteMs() / 1000;
+   MqlRates m[];
+   ArraySetAsSeries(m, false);                                    // oldest first
+   if(CopyRates(_Symbol, PERIOD_M1, iTime(_Symbol, InpTimeframe, 0), (datetime)quote, m) < 1) return 0;
+   return (int)((quote - m[0].time) / 60);
+  }
+
 // Sends the entry. Returns true when it should be sent again on the next tick
 // (market closed, requote, connection); false when done or given up.
 bool OpenPosition(const int dir, const double atr, const datetime sigBar)
   {
    if(!IsDemo()) { Alert("DonchianGold: not a demo account. No order sent."); ExpertRemove(); return false; }
    if(WaitingForQuote()) return true;                              // it stays pending; its stops come from the new quote
+   int late = MinutesIntoBar();
+   if(late > ENTRY_LATE_MIN)
+     {
+      Journal("SKIP", (dir == 1 ? "long" : "short") + " entry missed: its bar began " + IntegerToString(late) + " minutes ago");
+      return false;
+     }
    double eq = AccountInfoDouble(ACCOUNT_EQUITY);
    double stopDist = InpStopAtr * atr;
    double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
@@ -341,6 +399,7 @@ void ClearEntry() { GVDel("entry_dir"); GVDel("entry_bar"); GVDel("entry_atr"); 
 void Run()
   {
    if(!IsDemo()) { Alert("DonchianGold: not a demo account. Removing the EA."); ExpertRemove(); return; }
+   NoteOutage();
 
    ulong ticket = 0; int side = 0; double openPrice = 0;
    bool has = FindPosition(ticket, side, openPrice);
@@ -354,7 +413,8 @@ void Run()
      }
    int pendingExit = (int)GVGet("exit_pending", 0);
    if(has && pendingExit > 0) { ClosePosition(ticket, ExitName(pendingExit)); return; }
-   if(!has && GVGet("side", 0) != 0) ReportOutsideClose(pendingExit);
+   if(!has && GVGet("side", 0) != 0 && !ReportOutsideClose(pendingExit)) return;
+   if(HistorySettling()) return;                                  // everything above needs no bars, so it never waits
 
    datetime closed = iTime(_Symbol, InpTimeframe, 1);             // newest CLOSED bar
    if(closed == 0) return;
@@ -390,6 +450,7 @@ void Run()
    int n = CopyRates(_Symbol, InpTimeframe, 1, InpCalcBars, r);
    if(n < InpEmaPeriod + InpBreakout + 5 || r[n - 1].time != closed) return;   // history not ready: retry
    GVSet("lastbar", (double)closed);                              // decide once per closed bar
+   GlobalVariablesFlush();                                        // on disk now: a crash must not decide this bar again
 
    double c = r[n - 1].close;
    double ema = EmaLast(r, n, InpEmaPeriod);
@@ -452,7 +513,7 @@ void Run()
 
    string reason = "";
    if(!EntryAllowed(reason)) { Journal("SKIP", reason); return; }
-   if(OpenPosition(dir, atr, closed)) { GVSet("entry_dir", dir); GVSet("entry_bar", (double)closed); GVSet("entry_atr", atr); }
+   if(OpenPosition(dir, atr, closed)) { GVSet("entry_dir", dir); GVSet("entry_bar", (double)closed); GVSet("entry_atr", atr); GlobalVariablesFlush(); }
   }
 
 //--- MT5 events ---------------------------------------------------------
@@ -482,6 +543,7 @@ int OnInit()
    GVDel("entry_err"); GVDel("exit_err");                           // report a problem that is still there after a restart
    g_waitQuote = LastQuoteMs();                                     // a pending order waits for a quote from after this start
    g_waitSaid = false;
+   g_settleFrom = g_lastRun = TimeLocal();                          // MT5 may still be catching up on bars
    EventSetTimer(30);
    Journal("START", _Symbol + " " + EnumToString(InpTimeframe) + ", long " + (InpAllowLong ? "on" : "off") +
            ", short " + (InpAllowShort ? "on" : "off") + (InpFixedLots > 0 ? ", fixed " + DoubleToString(InpFixedLots, 3) + " lots" : ", risk " + DoubleToString(InpRiskPct, 2) + "%") + ", take-profit " + DoubleToString(InpTpR, 1) + "R" +

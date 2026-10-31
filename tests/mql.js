@@ -87,8 +87,12 @@ function stamp(t, secs) {
  * every journal row in `rows`.
  */
 function fakeBroker({ magic, open }) {
-  const b = { now: 0, clock: 0, quote: null, bars: [], open, sends: [], rows: [], position: null, deals: [], gv: new Map(), equity: 10000, rc: 0, price: 0, order: 0, ticketNo: 1, refuseWith: null };
-  b.tick = (t, bid, ask = bid + 0.3) => { b.now = b.clock = t; b.quote = { ms: t * 1000, bid, ask }; };
+  const b = { now: 0, clock: 0, quote: null, bars: [], m1: [], open, sends: [], rows: [], position: null, deals: [], gv: new Map(), equity: 10000, rc: 0, price: 0, order: 0, ticketNo: 1, refuseWith: null };
+  b.tick = (t, bid, ask = bid + 0.3) => {
+    b.now = b.clock = t;
+    b.quote = { ms: t * 1000, bid, ask };
+    if (b.m1[b.m1.length - 1] !== t - t % 60) b.m1.push(t - t % 60);    // the M1 bars that have had a quote
+  };
   const reply = rc => { b.rc = rc; return rc === RETCODES.TRADE_RETCODE_DONE || rc === RETCODES.TRADE_RETCODE_PLACED; };
   const send = (kind, extra) => {
     const s = Object.assign({ kind, at: b.clock, quoteMs: b.quote ? b.quote.ms : 0 }, extra);
@@ -130,7 +134,9 @@ function fakeBroker({ magic, open }) {
   b.env = Object.assign({}, RETCODES, {
     trade: b.trade, _Symbol: 'XAUUSD.sml', _Digits: 3, _Point: 0.001, DBL_MAX: Number.MAX_VALUE,
     TIME_DATE: 1, TIME_MINUTES: 2, TIME_SECONDS: 4,
-    Math, Alert() {}, ExpertRemove() {}, EventSetTimer() {}, Print() {}, GlobalVariablesFlush() {}, ArraySetAsSeries() {},
+    Math, Alert() {}, ExpertRemove() {}, EventSetTimer() {}, Print() {}, ArraySetAsSeries() {},
+    GlobalVariablesFlush: () => { b.onDisk = new Map(b.gv); },    // what a crash would leave behind
+    TimeLocal: () => b.clock,
     ArraySize: a => a.length,
     Journal: (...a) => { const [ev, detail] = a.slice(-2); b.rows.push({ t: b.now, ev, detail, who: a.length > 2 ? a[0] : null }); },
     TimeCurrent: () => b.now,
@@ -141,7 +147,9 @@ function fakeBroker({ magic, open }) {
     StringFind: (s, x) => s.indexOf(x),
     NormalizeDouble: (x, d) => +(+x).toFixed(d),
     MathMax: Math.max, MathMin: Math.min, MathAbs: Math.abs, MathRound: Math.round, MathFloor: Math.floor,
-    MQLInfoInteger: () => 1, TerminalInfoInteger: () => 1,
+    MQLInfoInteger: k => (k === 'MQL_TESTER' && b.live ? 0 : 1),   // set b.live to leave the tester's path
+    TerminalInfoInteger: k => (k === 'TERMINAL_CONNECTED' && b.offline ? 0 : 1),
+    SeriesInfoInteger: () => b.synced !== false,
     AccountInfoInteger: k => (k === 'ACCOUNT_TRADE_MODE' ? 'ACCOUNT_TRADE_MODE_DEMO' : 0),
     AccountInfoDouble: k => (k === 'ACCOUNT_MARGIN_FREE' ? 1e9 : b.equity),
     GlobalVariableCheck: k => b.gv.has(k),
@@ -169,8 +177,12 @@ function fakeBroker({ magic, open }) {
     iTime: (s, tf, shift) => { const r = b.bars[b.bars.length - 1 - shift]; return r ? r.time : 0; },
     iBarShift: () => 0,
     CopyRates: (s, tf, start, count, r) => {
-      const end = b.bars.length - start, from = Math.max(0, end - count);
       r.length = 0;
+      if (tf === 'PERIOD_M1') {                                       // by date: start and count are the first and last times
+        for (let i = b.m1.length - 1; i >= 0 && b.m1[i] >= start; i--) if (b.m1[i] <= count) r.unshift({ time: b.m1[i] });
+        return r.length;
+      }
+      const end = b.bars.length - start, from = Math.max(0, end - count);
       for (let i = from; i < end; i++) r.push(b.bars[i]);
       return r.length;
     }

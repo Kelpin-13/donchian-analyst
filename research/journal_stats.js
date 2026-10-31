@@ -68,7 +68,8 @@ function readRun(file) {
   const wm = rows.length ? /weights ([\d.]+)\/([\d.]+)\/([\d.]+)\/([\d.]+)\/([\d.]+)\/([\d.]+)/.exec(rows[0].detail || '') : null;
   const runW = {};
   IDS.forEach((id, i) => { runW[id] = wm ? Number(wm[i + 1]) : 1; });
-  return { file, intraday, rows, trades, runW };
+  const fixed = rows.length > 0 && /fixed [\d.]+ lots/.test(rows[0].detail || '');    // weights do nothing at a fixed size
+  return { file, intraday, rows, trades, runW, fixed };
 }
 
 const f = (v, d) => (v === null || v === undefined || !isFinite(v)) ? '-' : v.toFixed(d);
@@ -121,8 +122,9 @@ function main() {
   // Money on closed trades: growth and worst drawdown, as run and (with --as) as if weighted differently.
   const said = m => 'growth ' + f(m.growth, 1) + '%, worst drawdown ' + f(m.dd, 1) + '%';
   if (usd.length) {
-    console.log('Money, closed trades, as run' + (intraday ? ' (weights ' + IDS.map(id => runW[id]).join('/') + ')' : '') + ': ' + said(money(run, trades, () => 1)));
-    if (asWeights && intraday) console.log('Money as if weights were ' + asWeights.join('/') + ': ' +
+    console.log('Money, closed trades, as run' + (intraday && !run.fixed ? ' (weights ' + IDS.map(id => runW[id]).join('/') + ')' : '') + ': ' + said(money(run, trades, () => 1)));
+    if (asWeights && intraday && run.fixed) console.log('--as ignored: this run traded a fixed size, so risk weights could not have changed it.');
+    else if (asWeights && intraday) console.log('Money as if weights were ' + asWeights.join('/') + ': ' +
       said(money(run, trades, id => (IDS.indexOf(id) === -1 ? 1 : asWeights[IDS.indexOf(id)] / (runW[id] || 1)))));
   }
 }

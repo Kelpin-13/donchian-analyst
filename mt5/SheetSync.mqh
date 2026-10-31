@@ -18,7 +18,7 @@
 //| and https://script.googleusercontent.com                         |
 //+------------------------------------------------------------------+
 input group "Google Sheet (results)"
-input string InpSheetUrl = "";         // Sheet URL: from the sheet's menu MT5 gold EAs -> Connect MT5
+input string InpSheetUrl = "";         // Sheet URL: from the sheet's menu Trading Agent, Connect MT5
 input string InpSheetKey = "";         // Sheet key: from the same dialog
 
 long     g_syncPos  = 0;               // bytes of the journal the sheet has
@@ -114,7 +114,8 @@ string SheetSync(const string ea, const string file, const long magicFrom, const
       problem = "Google Sheet: MT5 blocks the request. Tools -> Options -> Expert Advisors -> Allow WebRequest for listed URL: " +
                 "add https://script.google.com and https://script.googleusercontent.com";
    else if(StringFind(reply, "rejected") == 0)
-      problem = "Google Sheet: the sheet rejected the key. Copy it again from the sheet's menu MT5 gold EAs -> Connect MT5";
+      problem = "Google Sheet: the sheet rejected the key. Copy it again from the sheet's menu " +
+                "Trading Agent -> MT5 gold EAs -> Connect MT5 (old system off: Trading Agent -> Connect MT5)";
    else if((code == 200 && StringFind(reply, "stored") == 0) || code == 302)
      {
       // Delivered (302: Apps Script ran and redirected to its reply). The sheet ignores repeats anyway.

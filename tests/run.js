@@ -493,6 +493,28 @@ ok(K.b.sends.length === 0, 'the kill switch on a Saturday sends nothing either')
 K.b.tick(MON_OPEN + 1, 3990);
 K.ea.Run();
 ok(!K.b.position && rowsNamed(K.b, 'KILL_SWITCH').length === 1, 'and closes on the first new tick');
+// A crash must not decide the same bar again.
+const Cr = dgAttach(SAT_ATTACH);
+timers(Cr.b, Cr.ea, SAT_ATTACH + 30, SAT_ATTACH + 60, 30);
+ok(Cr.b.onDisk && Cr.b.onDisk.get(DG_GV + 'lastbar') === FRI_BAR - 14400 && Cr.b.onDisk.get(DG_GV + 'entry_dir') === -1, 'the decided bar and a pending entry are on disk at once');
+// A take-profit's closing deal can reach the terminal just after the position has gone.
+const Tp = dgAttach(FRI_LAST, b => { withLong(b); b.gv.set(DG_GV + 'side', -1); });   // a short, and the newest closed bar is still below the channel
+Tp.b.tick(FRI_LAST + 1, 3896.6);
+Tp.b.position = null;
+Tp.ea.Run();
+ok(!Tp.b.rows.some(r => /^EXIT_/.test(r.ev)) && Tp.b.gv.get(DG_GV + 'side') === -1 && Tp.b.sends.length === 0, 'position gone, deal not there yet: it waits, and trades nothing meanwhile');
+Tp.b.deals.push({ ticket: 7, price: 4200, time: FRI_LAST + 2, reason: 'DEAL_REASON_TP' });
+Tp.b.clock += 5;
+Tp.ea.Run();
+ok(rowsNamed(Tp.b, 'EXIT_TARGET').length === 1 && Tp.b.gv.get(DG_GV + 'tp_wait') === -1 && Tp.b.sends.length === 0 && /waiting after a take-profit/.test(rowsNamed(Tp.b, 'BAR')[0].detail),
+   'the deal arrives: journaled as a take-profit, and the same breakout is not sold again');
+const Lost = dgAttach(FRI_LAST, withLong);
+Lost.b.tick(FRI_LAST + 1, 3896.6);
+Lost.b.position = null;
+Lost.ea.Run();
+Lost.b.clock += 61;
+Lost.ea.Run();
+ok(rowsNamed(Lost.b, 'EXIT_EXTERNAL').length === 1 && !Lost.b.gv.has(DG_GV + 'side'), 'a deal that never comes: after a minute it is reported as closed outside the EA');
 // Only "market closed" waits: any other failure is sent again as before.
 const Q = dgAttach(FRI_LAST);
 Q.b.tick(FRI_LAST + 1, 3896.6);
@@ -500,6 +522,197 @@ Q.b.refuseWith = RETCODES.TRADE_RETCODE_REQUOTE;
 Q.ea.Run(); Q.ea.Run();
 ok(Q.b.sends.length === 2, 'a requote is still resent straight away');
 
+section('MT5 missed entries');
+// Off when its bar began, an entry is dropped, not chased. "Began" is the bar's first price, not its open time.
+const WED_BAR = srv(10, 28, 8);
+/** The bar before WED_BAR gave a short signal; the EA comes back and gets a new quote `mins` minutes after WED_BAR's first price. */
+function dgBack(mins, seed) {
+  const b = fakeBroker({ magic: 20261009, open: goldOpen });
+  b.bars = fallingBars(WED_BAR);
+  b.gv.set(DG_GV + 'lastbar', WED_BAR - 2 * 14400);
+  b.tick(WED_BAR, 3900);
+  if (seed) seed(b);
+  const ea = loadDonchianGold(b);
+  ea.OnInit();
+  ea.Run();                                                       // decided at start-up; nothing goes before a newer quote
+  b.tick(WED_BAR + mins * 60, 3895);
+  ea.Run();
+  return { b, ea };
+}
+const Late = dgBack(180);
+ok(Late.b.sends.length === 0 && rowsNamed(Late.b, 'ENTRY_SHORT').length === 0, 'back three hours into the bar: no order for the signal it missed');
+ok(/short signal/.test(rowsNamed(Late.b, 'BAR')[0].detail) && rowsNamed(Late.b, 'SKIP').length === 1 && /^short entry missed: its bar began 180 minutes ago/.test(rowsNamed(Late.b, 'SKIP')[0].detail),
+   'the signal is journaled, then one SKIP row says how late it was');
+ok(!Late.b.gv.has(DG_GV + 'entry_dir') && Late.b.gv.get(DG_GV + 'lastbar') === WED_BAR - 14400, 'nothing stays pending, and that bar is not decided again');
+Late.b.tick(WED_BAR + 181 * 60, 3894);
+Late.ea.Run();
+ok(Late.b.sends.length === 0 && rowsNamed(Late.b, 'SKIP').length === 1 && rowsNamed(Late.b, 'BAR').length === 1, 'the next tick changes nothing');
+// It costs that one entry, nothing more: the next bar's own signal trades on its first price.
+Object.assign(Late.b.bars[Late.b.bars.length - 1], { low: 3979, close: 3980 });
+Late.b.bars.push({ time: WED_BAR + 14400, open: 3978, high: 3978, low: 3978, close: 3978 });
+Late.b.tick(WED_BAR + 14400, 3978);
+Late.ea.Run();
+ok(Late.b.sends.length === 1 && rowsNamed(Late.b, 'ENTRY_SHORT').length === 1, 'the next bar\'s own signal still trades');
+
+const Limit = dgBack(15), Past = dgBack(16);
+ok(Limit.b.sends.length === 1 && rowsNamed(Limit.b, 'ENTRY_SHORT').length === 1 && !rowsNamed(Limit.b, 'SKIP').length, 'back within 15 minutes of the first price: the entry still goes');
+ok(Past.b.sends.length === 0 && rowsNamed(Past.b, 'SKIP').length === 1, 'at 16 minutes it is skipped');
+
+// A late open is not a late entry: the 00:00 bar's first price can come hours after its open time.
+const Hol = fakeBroker({ magic: 20261009, open: goldOpen }), THU_BAR = srv(10, 29, 0);
+Hol.bars = fallingBars(THU_BAR - 14400);
+Hol.gv.set(DG_GV + 'lastbar', THU_BAR - 2 * 14400);
+Hol.tick(THU_BAR - 120, 3900);
+const HolEa = loadDonchianGold(Hol);
+HolEa.OnInit();
+Hol.tick(THU_BAR - 60, 3900);
+HolEa.Run();
+Object.assign(Hol.bars[Hol.bars.length - 1], { low: 3979, close: 3980 });
+Hol.bars.push({ time: THU_BAR, open: 3975, high: 3975, low: 3975, close: 3975 });
+Hol.tick(THU_BAR + 190 * 60, 3975);
+HolEa.Run();
+ok(Hol.sends.length === 1 && rowsNamed(Hol, 'ENTRY_SHORT').length === 1 && !rowsNamed(Hol, 'SKIP').length, 'a bar whose first price comes 3 hours after its open time trades on that price');
+
+// A retry stops at the same limit.
+const Rq = dgBack(1, b => { b.refuseWith = RETCODES.TRADE_RETCODE_REQUOTE; });
+ok(Rq.b.sends.length === 1 && Rq.b.gv.get(DG_GV + 'entry_dir') === -1, 'a refused entry stays pending');
+Rq.b.tick(WED_BAR + 10 * 60, 3895);
+Rq.ea.Run();
+const rqAt10 = Rq.b.sends.length;
+Rq.b.tick(WED_BAR + 16 * 60, 3895);
+Rq.ea.Run();
+ok(rqAt10 === 2 && Rq.b.sends.length === 2 && rowsNamed(Rq.b, 'SKIP').length === 1 && !Rq.b.gv.has(DG_GV + 'entry_dir'), 'it is resent at 10 minutes and dropped at 16');
+
+// Exits are never skipped, however late.
+const LateExit = dgBack(180, withLong);
+ok(!LateExit.b.position && rowsNamed(LateExit.b, 'EXIT_STOP').length === 1 && !rowsNamed(LateExit.b, 'SKIP').length, 'an exit three hours into the bar still goes');
+// If MT5 can't say when the bar began, the entry goes as it always did.
+const NoM1 = dgBack(180, b => { const real = b.env.CopyRates; b.env.CopyRates = (s, tf, ...a) => (tf === 'PERIOD_M1' ? -1 : real(s, tf, ...a)); });
+ok(NoM1.b.sends.length === 1 && rowsNamed(NoM1.b, 'ENTRY_SHORT').length === 1, 'no M1 history to read: the entry goes');
+const dgFns = functionsOf(readMt5('DonchianGold.mq5'));
+ok(dgFns.OpenPosition.body.indexOf('WaitingForQuote()') < dgFns.OpenPosition.body.indexOf('MinutesIntoBar()') && !/MinutesIntoBar/.test(dgFns.ClosePosition.body),
+   'a closed market is asked about first, so Monday\'s SKIP row is unchanged; ClosePosition never asks how late it is');
+ok(!/TimeCurrent/.test(dgFns.MinutesIntoBar.body), 'lateness is read from gold\'s own quote time');
+
+section('MT5 history catching up');
+// Live, not the tester: straight after an outage MT5 is still filling the holes in its history.
+const THU_0830 = srv(10, 29, 8, 30);
+/** Live DonchianGold back at 08:30 on a Thursday, holding the bars it had before: its channel looks broken and its newest closed bar looks like a short signal. */
+function dgLive(seed) {
+  const b = fakeBroker({ magic: 20261009, open: goldOpen });
+  b.live = true;
+  b.bars = fallingBars(srv(10, 29, 8));
+  b.gv.set(DG_GV + 'lastbar', srv(10, 28, 20));
+  b.tick(THU_0830 - 1, 3900);
+  if (seed) seed(b);
+  const ea = loadDonchianGold(b);
+  ea.OnInit();
+  return { b, ea };
+}
+const decided = b => rowsNamed(b, 'BAR').length;
+const H0 = dgLive();
+H0.ea.Run();
+H0.b.tick(THU_0830 + 18, 3899);
+H0.ea.Run();
+ok(decided(H0.b) === 0 && H0.b.sends.length === 0 && H0.b.gv.get(DG_GV + 'lastbar') === srv(10, 28, 20), 'in the first minute after a start no bar is decided, even with new quotes');
+// The holes fill: the true bars show this was no breakout at all.
+H0.b.bars.slice(-22, -2).forEach(r => { r.low = 3980; });
+H0.b.tick(THU_0830 + 60, 3899);
+H0.ea.Run();
+ok(decided(H0.b) === 1 && /\| FLAT$/.test(rowsNamed(H0.b, 'BAR')[0].detail) && H0.b.sends.length === 0, 'after a minute it decides on the full history: the false signal never traded');
+const H1 = dgLive();
+H1.b.synced = false;
+H1.b.tick(THU_0830 + 61, 3899);
+H1.ea.Run();
+const notDone = decided(H1.b);
+H1.b.synced = true;
+H1.b.tick(THU_0830 + 62, 3899);
+H1.ea.Run();
+ok(notDone === 0 && decided(H1.b) === 1, 'after that minute it still waits if MT5 says it isn\'t done');
+const H2 = dgLive();
+H2.b.synced = false;
+timers(H2.b, H2.ea, THU_0830 - 1 + 30, THU_0830 - 1 + 299, 30);        // the timer keeps running: no outage, just a slow flag
+H2.b.tick(THU_0830 - 1 + 299, 3899);
+H2.ea.Run();
+const at299 = decided(H2.b);
+H2.b.tick(THU_0830 - 1 + 300, 3899);
+H2.ea.Run();
+ok(at299 === 0 && decided(H2.b) === 1, 'but never past five minutes: a flag that never clears can\'t leave the EA quiet');
+
+// What needs no bars never waits.
+const H3 = dgLive(b => { withLong(b); b.gv.set(DG_GV + 'exit_pending', 1); });
+H3.b.tick(THU_0830 + 1, 3899);
+H3.ea.Run();
+ok(!H3.b.position && rowsNamed(H3.b, 'EXIT_STOP').length === 1, 'an exit already decided goes straight away');
+const H4 = dgLive(b => { withLong(b); b.gv.set('DG_KILL', 1); });
+H4.b.tick(THU_0830 + 1, 3899);
+H4.ea.Run();
+ok(!H4.b.position && rowsNamed(H4.b, 'KILL_SWITCH').length === 1, 'so does the kill switch');
+const H5 = dgLive(withLong);
+H5.b.tick(THU_0830 + 1, 3899);
+H5.ea.Run();
+ok(H5.b.position && decided(H5.b) === 0, 'an exit that still needs a bar\'s numbers waits for them, with the broker\'s stop in place');
+H5.b.tick(THU_0830 + 60, 3899);
+H5.ea.Run();
+ok(!H5.b.position && rowsNamed(H5.b, 'EXIT_STOP').length === 1, 'and goes after the minute');
+// A pending entry reads bars too, and is measured only when they can be trusted.
+const H6 = dgLive(b => { b.gv.set(DG_GV + 'entry_dir', -1); b.gv.set(DG_GV + 'entry_bar', srv(10, 29, 4)); b.gv.set(DG_GV + 'entry_atr', 20); });
+H6.b.tick(THU_0830 + 1, 3899);
+H6.ea.Run();
+ok(H6.b.sends.length === 0 && H6.b.gv.get(DG_GV + 'entry_dir') === -1, 'a pending entry waits too');
+H6.b.tick(THU_0830 + 60, 3899);
+H6.ea.Run();
+ok(H6.b.sends.length === 1 && rowsNamed(H6.b, 'ENTRY_SHORT').length === 1, 'and goes once the minute is up');
+
+// A sleep or a lost connection with the EA still running: its bars have holes just the same.
+const H7 = dgLive();
+timers(H7.b, H7.ea, THU_0830 + 60, THU_0830 + 120, 30);
+const seenBefore = decided(H7.b);
+H7.b.bars.push({ time: srv(10, 29, 20), open: 3895, high: 3895, low: 3895, close: 3895 });
+H7.b.tick(srv(10, 29, 20, 34), 3895);
+H7.ea.Run();
+const atWake = decided(H7.b);
+H7.b.tick(srv(10, 29, 20, 35), 3895);
+H7.ea.Run();
+ok(seenBefore === 1 && atWake === 1 && decided(H7.b) === 2, 'back from a sleep: the first tick waits, and the bar is decided a minute later');
+const H8 = dgLive();
+timers(H8.b, H8.ea, THU_0830 + 60, THU_0830 + 120, 30);
+H8.b.offline = true;
+H8.b.clock = THU_0830 + 150;
+H8.ea.Run();
+H8.b.offline = false;
+H8.b.bars.push({ time: srv(10, 29, 12), open: 3895, high: 3895, low: 3895, close: 3895 });
+H8.b.tick(THU_0830 + 180, 3895);
+H8.ea.Run();
+const atBack = decided(H8.b);
+H8.b.tick(THU_0830 + 210, 3895);
+H8.ea.Run();
+ok(atBack === 1 && decided(H8.b) === 2, 'a lost connection: the minute runs from when it was last seen down');
+// Running normally nothing waits: not at a new bar, and not on Monday after a weekend of quiet timers.
+const H9 = dgLive();
+timers(H9.b, H9.ea, THU_0830 + 60, srv(10, 29, 12), 30);
+H9.b.bars.push({ time: srv(10, 29, 12), open: 3895, high: 3895, low: 3895, close: 3895 });
+H9.b.tick(srv(10, 29, 12), 3895);
+H9.ea.Run();
+ok(decided(H9.b) === 2, 'running normally, a new bar is decided on its first tick');
+const HW = dgAttach(SAT_ATTACH);
+HW.b.live = true;
+timers(HW.b, HW.ea, SAT_ATTACH + 30, MON_OPEN + 60, 30);
+const satSkips = rowsNamed(HW.b, 'SKIP').length, satSends = HW.b.sends.length;
+HW.b.bars.push({ time: MON_BAR, open: 3990, high: 3990, low: 3990, close: 3990 });
+HW.b.tick(MON_OPEN + 61, 3990);
+HW.ea.Run();
+ok(satSkips === 0 && satSends === 0 && rowsNamed(HW.b, 'SKIP').length === 1 && rowsNamed(HW.b, 'BAR').length === 2, 'live over a weekend: Monday\'s first tick still drops the old signal and decides afresh, with no wait');
+const InTester = dgLive();
+InTester.b.live = false;
+InTester.b.synced = false;
+InTester.ea.Run();
+ok(decided(InTester.b) === 1, 'the tester never waits, so its results can\'t move');
+const runBody = dgFns.Run.body;
+ok(runBody.indexOf('pendingExit > 0') < runBody.indexOf('HistorySettling()') && runBody.indexOf('HistorySettling()') < runBody.indexOf('iTime('), 'Run asks after what needs no bars and before reading any');
+ok(/^\s*if\(MQLInfoInteger\(MQL_TESTER\)\) return false;/m.test(dgFns.HistorySettling.body), 'the first thing HistorySettling does is rule out the tester');
+
+section('MT5 market closed: GoldIntraday and the rule itself');
 // GoldIntraday: its own send paths, on the same broker.
 const giLoad = () => {
   const b = fakeBroker({ magic: 20261013 + 3, open: goldOpen });
@@ -546,6 +759,143 @@ const SENDS = /\btrade\.(Buy|Sell|BuyStop|SellStop|PositionClose|OrderDelete)\(/
   ok(/g_waitQuote = LastQuoteMs\(\);[^\n]*\n\s*g_waitSaid = false;/.test(fns.OnInit.body), file + ': OnInit starts by waiting for a quote newer than the last one seen');
   ok(/rc == TRADE_RETCODE_MARKET_CLOSED/.test(fns.Transient.body), file + ': "market closed" stays a reason to try again, not to give up');
   ok(!/TimeCurrent|TimeTradeServer|SymbolInfoSession/.test(fns.WaitingForQuote.body + fns.LastQuoteMs.body), file + ': the wait reads gold\'s own quote time, not a clock that stands still over a weekend');
+});
+
+section('MT5 history catching up: GoldIntraday');
+// It works out a day's levels once and keeps them all day, so a hole at that moment would last until the next day.
+const GI_NOW = srv(11, 3, 9, 1);                                  // a Tuesday, a minute into the 09:00 bar
+/** Daily bars up to today; with `hole` the 13 days before today are missing, as on 29 Oct. */
+const dailyBars = (today, hole) => {
+  const out = [];
+  for (let i = 60; i >= 0; i--) {
+    if (hole && i >= 1 && i <= 13) continue;
+    const px = 4200 - (60 - i) * 3;
+    out.push({ time: (Math.floor(today / 86400) - i) * 86400, open: px, high: px + 20 + i % 7, low: px - 20 - i % 5, close: px - 1 });
+  }
+  return out;
+};
+/** GoldIntraday's real Run and LoadDay, live and just started at `now`; what they hand on to the strategies is only recorded. */
+function giRun(now, seed) {
+  const b = fakeBroker({ magic: 20261016, open: goldOpen });
+  b.live = true;
+  b.daily = dailyBars(now, true);
+  b.held = {};                                                    // strategy -> when its position opened
+  const calls = [], call = n => () => { calls.push(n); };
+  Object.assign(b.env, {
+    NS: 7, g_day: { day: -1, ok: false, dtOk: false },
+    DayOf: t => Math.floor(t / 86400), MinOfDay: t => Math.floor((t % 86400) / 60), Px: p => (+p).toFixed(3),
+    CountTrades: call('CountTrades'), Reconcile: call('Reconcile'), TrackFills: call('TrackFills'), StandDown: call('StandDown'),
+    Decide: call('Decide'), Arm: call('Arm'), SendQueued: call('SendQueued'), SyncOrders: call('SyncOrders'),
+    FlatMinute: () => 23 * 60,
+    HasPos: k => k in b.held, FindPos: k => k in b.held, openedAt: k => b.held[k],
+    CloseStrat: (k, why) => { calls.push('close ' + why); delete b.held[k]; },
+    iTime: (s, tf, shift) => Math.floor(b.now / 900) * 900 - shift * 900,
+    CopyRates: (s, tf, start, count, r) => { r.length = 0; b.daily.forEach(x => r.push(x)); return r.length; }
+  });
+  b.gv.set('GI_lastbar', Math.floor(now / 900) * 900 - 900);      // not a first start: this bar has not been decided yet
+  b.tick(now, 3900);
+  if (seed) seed(b);
+  const ea = loadEa('GoldIntraday.mq5', {
+    env: b.env,
+    lift: ['IsDemo', 'Run', 'LoadDay', 'AtrLast', 'TrueRange', 'NoteOutage', 'HistorySettling', 'GVSet', 'GVGet', 'GVDel'],
+    patches: [['if(!FindPos(k, t, s, opened)) continue;', 'if(!FindPos(k)) continue; opened = openedAt(k);']]
+  });
+  ea.set('GVP', 'GI_');
+  ea.set('g_settleFrom', now); ea.set('g_lastRun', now);          // what OnInit does (checked below)
+  for (let k = 0; k < 7; k++) ea.get('g_exitWhy')[k] = '';
+  return { b, ea, calls };
+}
+const giDay = g => { const r = rowsNamed(g.b, 'DAY')[0]; return r ? r.detail : null; };
+const barsRead = g => ['Decide', 'Arm', 'SendQueued', 'SyncOrders'].some(n => g.calls.includes(n));
+const count = (g, n) => g.calls.filter(c => c === n).length;
+
+const Full = giRun(GI_NOW, b => { b.live = false; b.daily = dailyBars(GI_NOW, false); });
+Full.ea.Run();
+const Holed = giRun(GI_NOW, b => { b.live = false; b.synced = false; });
+Holed.ea.Run();
+ok(giDay(Full) && giDay(Holed) && giDay(Full) !== giDay(Holed), 'the tester never waits, and shows the danger: a history with holes gives other Dual Thrust levels');
+const Gi0 = giRun(GI_NOW);
+Gi0.ea.Run();
+Gi0.b.tick(GI_NOW + 18, 3899);
+Gi0.ea.Run();
+ok(!giDay(Gi0) && !barsRead(Gi0) && Gi0.b.gv.get('GI_lastbar') === Math.floor(GI_NOW / 900) * 900 - 900, 'in the first minute after a start no levels are worked out and no bar is decided, even with new quotes');
+ok(!Gi0.b.sends.length && !Gi0.calls.includes('StandDown'), 'and the orders resting at the broker are left alone');
+ok(count(Gi0, 'Reconcile') === 2 && count(Gi0, 'TrackFills') === 2, 'but a stop order that filled or a position that closed while it was off is reported at once');
+// The holes fill: the levels now come from the whole history, and stay right for the day.
+Gi0.b.daily = dailyBars(GI_NOW, false);
+Gi0.b.tick(GI_NOW + 60, 3899);
+Gi0.ea.Run();
+ok(giDay(Gi0) === giDay(Full) && count(Gi0, 'Decide') === 1 && count(Gi0, 'Arm') === 1, 'after a minute the day\'s levels come from the whole history, and the bar is decided');
+const Gi1 = giRun(GI_NOW);
+Gi1.b.synced = false;
+timers(Gi1.b, Gi1.ea, GI_NOW + 10, GI_NOW + 300, 10);             // the timer keeps running: no outage, just a slow flag
+ok(!giDay(Gi1) && !barsRead(Gi1), 'after that minute it still waits if MT5 says it isn\'t done');
+Gi1.b.clock = GI_NOW + 300;
+Gi1.ea.Run();
+ok(giDay(Gi1) && barsRead(Gi1), 'but never past five minutes');
+
+// What needs no bars never waits.
+const Gi2 = giRun(GI_NOW, b => { b.held[3] = GI_NOW - 86400; });
+Gi2.ea.Run();
+ok(Gi2.calls.includes('close SESSION') && !giDay(Gi2), 'a position left from an earlier day closes straight away');
+const Gi3 = giRun(GI_NOW, b => { b.held[3] = GI_NOW - 60; b.gv.set('DG_KILL', 1); });
+Gi3.ea.Run();
+ok(Gi3.calls.includes('close KILL_SWITCH') && Gi3.calls.includes('StandDown'), 'so does the kill switch');
+const Gi4 = giRun(GI_NOW, b => { b.held[4] = GI_NOW - 60; });
+Gi4.ea.get('g_exitWhy')[4] = 'REVERSE';
+Gi4.ea.Run();
+ok(Gi4.calls.includes('close REVERSE') && !barsRead(Gi4), 'so does an exit already decided');
+const Gi5 = giRun(srv(11, 3, 23, 1), b => { b.held[1] = srv(11, 3, 17, 0); });
+Gi5.ea.Run();
+ok(Gi5.calls.includes('close SESSION') && Gi5.calls.includes('StandDown'), 'and flat at 23:00 still means flat');
+// A restart inside the bar: the stop orders' levels are rebuilt only after the minute, and a passed level isn't chased.
+const Gi6 = giRun(GI_NOW, b => { b.gv.set('GI_lastbar', Math.floor(GI_NOW / 900) * 900); });
+Gi6.ea.Run();
+const armedTooSoon = barsRead(Gi6);
+Gi6.b.clock = GI_NOW + 60;
+Gi6.ea.Run();
+ok(!armedTooSoon && count(Gi6, 'Arm') === 1 && !Gi6.calls.includes('Decide') && Gi6.ea.get('g_noChase') === true, 'restarted inside a bar: orders are rebuilt after the minute, with no chasing');
+
+// A sleep or a lost connection with the EA still running.
+const Gi7 = giRun(GI_NOW);
+timers(Gi7.b, Gi7.ea, GI_NOW + 60, GI_NOW + 120, 10);
+const decidedOnce = count(Gi7, 'Decide');
+Gi7.b.tick(srv(11, 3, 11, 0), 3899);
+Gi7.ea.Run();
+const atWakeGi = count(Gi7, 'Decide');
+Gi7.b.tick(srv(11, 3, 11, 1), 3899);
+Gi7.ea.Run();
+ok(decidedOnce === 1 && atWakeGi === 1 && count(Gi7, 'Decide') === 2, 'back from a sleep: the first tick waits, and the bar is decided a minute later');
+const Gi8 = giRun(GI_NOW);
+timers(Gi8.b, Gi8.ea, GI_NOW + 60, srv(11, 3, 9, 14, 30), 10);
+Gi8.b.offline = true;
+Gi8.b.clock = srv(11, 3, 9, 14, 30);
+Gi8.ea.Run();
+Gi8.b.offline = false;
+Gi8.b.tick(srv(11, 3, 9, 15), 3899);
+Gi8.ea.Run();
+const atBackGi = count(Gi8, 'Decide');
+Gi8.b.tick(srv(11, 3, 9, 15, 30), 3899);
+Gi8.ea.Run();
+ok(atBackGi === 1 && count(Gi8, 'Decide') === 2, 'a lost connection: the minute runs from when it was last seen down');
+// Running normally nothing waits: not at a new bar, and not on Monday after a weekend of quiet timers.
+const Gi9 = giRun(GI_NOW);
+timers(Gi9.b, Gi9.ea, GI_NOW + 60, srv(11, 3, 9, 15), 10);
+Gi9.b.tick(srv(11, 3, 9, 15), 3899);
+Gi9.ea.Run();
+ok(count(Gi9, 'Decide') === 2, 'running normally, a new bar is decided on its first tick');
+const GiW = giRun(FRI_LAST, b => { b.daily = dailyBars(srv(11, 2, 1, 3), false); });
+timers(GiW.b, GiW.ea, FRI_LAST + 60, srv(11, 2, 1, 2, 30), 60);
+GiW.b.tick(srv(11, 2, 1, 3), 3990);
+GiW.ea.Run();
+ok(giDay(GiW) && GiW.calls.includes('Decide'), 'live over a weekend: Monday\'s first tick works out the levels and decides, with no wait');
+
+[['DonchianGold.mq5', 'pendingExit > 0'], ['GoldIntraday.mq5', 'm >= flat) { StandDown']].forEach(([file, last]) => {
+  const fns = functionsOf(readMt5(file)), body = fns.Run.body, at = body.indexOf('HistorySettling()');
+  ok(body.indexOf('NoteOutage()') > 0 && body.indexOf('NoteOutage()') < body.indexOf(last) && body.indexOf(last) < at, file + ': Run notes an outage first, and waits only after what needs no bars');
+  ok(!/iTime|CopyRates|LoadDay|Decide|Arm\(/.test(body.slice(0, at)), file + ': nothing before the wait reads a bar');
+  ok(/^\s*if\(MQLInfoInteger\(MQL_TESTER\)\) return false;/m.test(fns.HistorySettling.body), file + ': the first thing the wait does is rule out the tester');
+  ok(/g_settleFrom = g_lastRun = TimeLocal\(\);/.test(fns.OnInit.body), file + ': OnInit starts the minute');
 });
 }
 
