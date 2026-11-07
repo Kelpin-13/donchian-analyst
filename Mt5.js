@@ -35,9 +35,9 @@ const MT5_STRATEGIES = [
     entry: 'BUY when a 4-hour bar closes above the highest high of the 20 bars before it and above its 100-bar average (EMA 100). ' +
            'SELL when it closes below the lowest low of those 20 bars and below the average. The order goes in at the next bar\'s open.',
     stop: '2 × ATR(14) from the entry, judged on each bar\'s close, plus a safety stop at the broker 4 × ATR away in case of a sudden crash.',
-    exit: 'The stop; a take-profit at the broker at 1.5 × the stop distance (3 × ATR); a close back through the 10-bar channel (the trend has ended); or after 60 bars (about 10 trading days). After a take-profit that side waits for a close back inside the 20-bar channel.',
+    exit: 'The stop; once the trade is one stop-distance in profit, the broker stop trails half a stop-distance behind the best price; a take-profit at the broker at 1.5 × the stop distance (3 × ATR); a close back through the 10-bar channel (the trend has ended); or after 60 bars (about 10 trading days). After a take-profit that side waits for a close back inside the 20-bar channel.',
     note: 'It holds overnight, so it pays (or earns) the broker\'s daily swap.' },
-  { id: 'NY_ORB', ea: 'GoldIntraday', chart: 'M15', name: 'New York opening range', stopUsd: 20, perWeek: 3.25, avgR: 0.044,
+  { id: 'NY_ORB', retired: '6 Nov 2026', ea: 'GoldIntraday', chart: 'M15', name: 'New York opening range', stopUsd: 20, perWeek: 3.25, avgR: 0.044,
     trades: 3186, eras: [118.1, -38.2, 60.8],
     how: 'Breakout of the first half hour of New York trading, with the H4 trend',
     glance: '{17:00-20:00}', direction: 'The H4 trend\'s side only',
@@ -68,7 +68,7 @@ const MT5_STRATEGIES = [
            'A buy-stop waits at today\'s open + ½ range and a sell-stop at the open − ½ range.',
     stop: 'The opposite trigger. When it is hit, the trade turns around into the other direction (stop-and-reverse), up to 3 trades a day.',
     exit: 'The stop-and-reverse, a take-profit at the broker at 1.5 × the stop distance (no more trades that day after it), or closed at {23:00}.',
-    note: 'Its stop is the widest, so at the fixed size it risks the most: usually about $126, over 1% of a $10,000 account, and about $250 on the wildest days.' },
+    note: 'Its stop is the widest, so at the fixed size it risks the most: usually about $126, over 1% of a $10,000 account. On the wildest days its stop would cost over $150, and then it does not trade (38 of its 322 trades in 2023-26).' },
   { id: 'R_BREAKER', ea: 'GoldIntraday', chart: 'M15', name: 'R-Breaker', stopUsd: 52, perWeek: 0.92, avgR: 0.059,
     trades: 907, eras: [39.0, 0.7, 13.5],
     how: "Breakouts and reversals at levels from yesterday's prices, with the H4 trend",
@@ -90,7 +90,7 @@ const MT5_STRATEGIES = [
     stop: '0.5 × the daily ATR from the entry.',
     exit: 'The stop, a take-profit at the broker at 1.5 × the stop distance, or closed at {23:00}.',
     note: 'Strong when gold trends (2008-14, 2023-26) but lost through the quiet years 2015-22.' },
-  { id: 'MOM_20', ea: 'GoldIntraday', chart: 'M15', name: 'Momentum at 20:00', stopUsd: 52, perWeek: 2.90, avgR: 0.015,
+  { id: 'MOM_20', retired: '6 Nov 2026', ea: 'GoldIntraday', chart: 'M15', name: 'Momentum at 20:00', stopUsd: 52, perWeek: 2.90, avgR: 0.015,
     trades: 2842, eras: [18.5, 5.1, 18.2],
     how: "Joins the day's direction at 20:00 server time, with the H4 trend",
     glance: '{20:00}', direction: 'Buy or sell, with the H4 trend',
@@ -104,9 +104,11 @@ const MT5_STRATEGIES = [
 const MT5_RULES = [
   'Demo account only: both EAs refuse to run on a real-money account.',
   'Gold only (XAUUSD.sml): both EAs refuse any other chart.',
-  'Every order has its stop loss and its take-profit at the broker from the moment it opens. The stop limits the loss; the take-profit only banks a gain.',
+  'Every order has its stop loss and its take-profit at the broker from the moment it opens. The stop limits the loss; the take-profit only banks a gain. Once the trade fills, the take-profit is set again from the real fill price, so the reward is exactly the multiple of the risk that its strategy uses.',
   'One position per strategy at a time. No adding to losing trades, no martingale, no doubling up.',
-  'Trade size: every trade is 0.01 lots (1 ounce of gold), so each $1 the price moves is $1. What a trade can lose is the distance to its stop: usually from about $20 (New York opening range) to about $126 (Dual Thrust).',
+  'Trade size: every trade risks 0.5% of the account (about $50 on $10,000): the size is set so that its stop loss costs that much, whatever the stop distance. A trade whose stop is more than $150 away (its cost at 0.01 lots, 1 ounce) is not taken.',
+  'Account stop: when the account falls 15% below its highest value, both EAs close every trade and stop until the owner switches them back on (DG_KILL to 0 in MT5, F3).',
+  'Trailing stop on the H4 strategy only: once its trade is one stop-distance in profit, the broker stop follows half a stop-distance behind the best price, and it only ever tightens. The intraday strategies keep their fixed stops: every trailing rule tested made them less money.',
   'Every intraday trade is closed by {23:00}, before the daily rollover, so intraday trades pay no overnight swap.',
   'No new intraday trades after the account falls 2% in one day.',
   'Emergency stop for both EAs: in MT5 press F3 → Add → name DG_KILL, value 1. They close everything and stop trading.',
@@ -251,6 +253,8 @@ function mt5BuildTrades_(log) {
   return { trades, open: Object.keys(open).map(k => open[k]) };
 }
 
+// The strategies still trading (owner retired NY_ORB and MOM_20 on 6 Nov 2026; their past trades stay in the Summary).
+function mt5Active_() { return MT5_STRATEGIES.filter(x => !x.retired); }
 function mt5Name_(id) { const s = MT5_STRATEGIES.filter(x => x.id === id)[0]; return s ? s.name : id; }
 
 
@@ -389,13 +393,13 @@ function mt5WriteSummary_(log, trades, open) {
     const ts = trades.filter(t => t.strat === st.id);
     const w = ts.filter(t => (t.pnl !== null ? t.pnl : t.r || 0) > 0).length;
     const r = ts.reduce((a, t) => a + (t.r || 0), 0), p = ts.reduce((a, t) => a + (t.pnl || 0), 0);
-    rows.push([st.name, ts.length, st.how, ts.length ? w / ts.length : '', Math.round(r * 100) / 100,
-               ts.length ? Math.round(r / ts.length * 1000) / 1000 : '', st.avgR, Math.round(p * 100) / 100, Math.round(st.perWeek * weeks * 10) / 10]);
+    rows.push([st.name + (st.retired ? ' (retired ' + st.retired + ')' : ''), ts.length, st.how, ts.length ? w / ts.length : '', Math.round(r * 100) / 100,
+               ts.length ? Math.round(r / ts.length * 1000) / 1000 : '', st.avgR, Math.round(p * 100) / 100, st.retired ? '' : Math.round(st.perWeek * weeks * 10) / 10]);
   });
   const allR = trades.reduce((a, t) => a + (t.r || 0), 0);
   rows.push(['All strategies', trades.length, '', trades.length ? won / trades.length : '', Math.round(allR * 100) / 100,
              trades.length ? Math.round(allR / trades.length * 1000) / 1000 : '', '', Math.round(total * 100) / 100,
-             Math.round(MT5_STRATEGIES.reduce((a, st) => a + st.perWeek, 0) * weeks * 10) / 10]);
+             Math.round(mt5Active_().reduce((a, st) => a + st.perWeek, 0) * weeks * 10) / 10]);
   const nb = rows.length - 1;
   s.getRange(t0, 1, rows.length, W).setValues(rows);
   s.getRange(t0, 1, 1, W).setFontWeight('bold').setBackground(MT5_STYLE.sub).setHorizontalAlignment('center').setWrap(true);
@@ -453,7 +457,7 @@ function mt5WriteSummary_(log, trades, open) {
   section(h0, 'HOW TO READ THIS');
   const notes = [
     'R = the result in units of the risk taken. +1 R means the trade made what it risked; -1 R means its stop loss was hit.',
-    'Every trade is 0.01 lots (1 ounce), so 1 R is different money for each strategy: about $20 for New York opening range, about $126 for Dual Thrust. Trades from before the fixed size (October 2026) were smaller.',
+    'From 6 November 2026 every trade risks 0.5% of the account, so 1 R is about $50 on $10,000. From late October to 6 November every trade was 0.01 lots (1 ounce), so 1 R was the stop distance: about $20 to $126.',
     '"Backtest average" is what 18 years of the broker\'s gold data (2008-2026) says each strategy earns per trade on average. Those runs were made before the take-profits were added (30 October 2026).',
     'A few weeks of trades swing far around that average: this period shows the EAs run by the rules; the backtest is the evidence of profit.',
     'Slippage (MT5 Trades tab) = how much worse than the planned level a stop order filled, in dollars per ounce.',
@@ -539,7 +543,7 @@ function mt5Times_(text, shift, withBroker) {
  * when asked or when the clocks change (it shows times in the owner's clock).
  */
 function mt5WriteStrategies_(force) {
-  const shift = mt5ClockShift_(), stamp = 'v4|' + shift;
+  const shift = mt5ClockShift_(), stamp = 'v7|' + shift;
   const props = PropertiesService.getScriptProperties(), ss = ss_();
   let s = ss.getSheetByName(MT5_STRATEGIES_SHEET);
   if (s && !force && props.getProperty('MT5_STRAT_DONE') === stamp) return;
@@ -559,7 +563,7 @@ function mt5WriteStrategies_(force) {
 
   s.getRange(1, 1).setValue('The strategies trading right now').setFontSize(20).setFontWeight('bold');
   s.setRowHeight(1, 46);
-  s.getRange(2, 1).setValue(MT5_STRATEGIES.length + ' strategies in 2 Expert Advisors on the OANDA demo account  ·  times are your clock; ' +
+  s.getRange(2, 1).setValue(mt5Active_().length + ' strategies in 2 Expert Advisors on the OANDA demo account  ·  times are your clock; ' +
     'the broker\'s clock is ' + hours + ' hours ' + (shift >= 0 ? 'behind' : 'ahead of') + ' yours').setFontColor(MT5_STYLE.grey).setFontSize(10);
   s.setRowHeight(2, 24);
   s.setRowHeight(3, 14);
@@ -567,7 +571,7 @@ function mt5WriteStrategies_(force) {
   // At a glance
   section(4, 'AT A GLANCE');
   const glance = [['Strategy', 'Expert Advisor', 'When (your time)', 'Direction', 'Its stop usually costs', 'Trades a week', '18-year result', 'Eras it made money']];
-  MT5_STRATEGIES.forEach(st => glance.push([st.name, st.ea + '  ·  ' + st.chart, T(st.glance, false), st.direction, '$' + st.stopUsd,
+  mt5Active_().forEach(st => glance.push([st.name, st.ea + '  ·  ' + st.chart, T(st.glance, false), st.direction, '$' + st.stopUsd,
                                             st.perWeek, Math.round(st.eras.reduce((a, b) => a + b, 0)),
                                             st.eras.filter(r => r > 0).length + ' of ' + st.eras.length]));
   const ng = glance.length - 1;
@@ -596,7 +600,7 @@ function mt5WriteStrategies_(force) {
 
   // One card per strategy
   const signedR = v => (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v) + ' R';
-  MT5_STRATEGIES.forEach((st, i) => {
+  mt5Active_().forEach((st, i) => {
     section(r++, (i + 1) + '   ' + st.name.toUpperCase());
     const lines = [
       ['Expert Advisor', st.ea + ' on the XAUUSD.sml ' + st.chart + ' chart'],
@@ -606,7 +610,7 @@ function mt5WriteStrategies_(force) {
       ['How it enters', T(st.entry, true)],
       ['Stop loss', st.stop],
       ['How it exits', T(st.exit, true)],
-      ['Trade size', '0.01 lots (1 ounce). Its stop usually costs about $' + st.stopUsd + ', which is ' + (st.stopUsd / 100).toFixed(2) + '% of $10,000'],
+      ['Trade size', 'Sized so its stop costs 0.5% of the account (about $50 on $10,000). Its stop is usually about $' + st.stopUsd + ' away, so on $10,000 that is about ' + (50 / st.stopUsd / 100).toFixed(3) + ' lots'],
       ['Backtest, 18 years', st.trades + ' trades from 2008 to 2026 (' + st.perWeek + ' a week)  ·  ' +
                              signedR(Math.round(st.eras.reduce((a, b) => a + b, 0))) + ' in total  ·  ' +
                              (st.avgR >= 0 ? '+' : '−') + Math.abs(st.avgR) + ' R per trade on average'],

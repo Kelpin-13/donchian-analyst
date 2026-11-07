@@ -16,7 +16,9 @@
 //|                                                                  |
 //| Each strategy has its own magic number (base + 1..6) and at most |
 //| one position. Every order carries its stop loss and take-profit |
-//| at the broker;                                                   |
+//| at the broker; once filled, the take-profit is set again from    |
+//| the real fill, so the reward is exactly the strategy's multiple  |
+//| of the risk. A trade whose stop would cost over $150 is skipped. |
 //| 0.01 lots a trade, no averaging down, no martingale, daily       |
 //| loss limit, kill switch (global variable DG_KILL = 1, shared    |
 //| with DonchianGold). Everything it needs is rebuilt from prices   |
@@ -25,30 +27,37 @@
 //| an outage no bar is read for a minute, so MT5 can fill its       |
 //| history.                                                         |
 //|                                                                  |
+//| 1.16: New York ORB and momentum at 20:00 retired (owner, 6 Nov   |
+//| 2026): both off by default; they lost money once fills were /usr/bin/bash.50|
+//| worse (research/stress_lab.js).                                  |
+//|                                                                  |
 //| Parity: research/parity_intraday.js after a Strategy Tester run  |
 //| (M15, 1 minute OHLC).                                            |
 //+------------------------------------------------------------------+
 #property copyright   "Donchian Analyst (personal research)"
-#property version     "1.14"
+#property version     "1.16"
 #property description "Six intraday gold strategies, flat before the rollover. Demo accounts only."
 
 #include <Trade\Trade.mqh>
 #include "SheetSync.mqh"
+#include "AccountGuard.mqh"
 
 input group "Portfolio (must match research/intraday.js)"
-input bool   InpNyOrb      = true;     // 1 New York ORB 16:30-17:00, with the H4 trend
+input bool   InpNyOrb      = false;    // 1 New York ORB 16:30-17:00, with the H4 trend (retired 6 Nov 2026)
 input bool   InpAsian      = true;     // 2 Asian range breakout, narrow nights only
 input bool   InpDualThrust = true;     // 3 Dual Thrust (4 days, k 0.5), stop and reverse
 input bool   InpRBreaker   = true;     // 4 R-Breaker, with the H4 trend
 input bool   InpMom16      = true;     // 5 Intraday momentum at 16:00, with the H4 trend
-input bool   InpMom20      = true;     // 6 Intraday momentum at 20:00, with the H4 trend
+input bool   InpMom20      = false;    // 6 Intraday momentum at 20:00, with the H4 trend (retired 6 Nov 2026)
 input double InpNarrow     = 0.345104; // Narrow night: Asian range / daily ATR below this (2023-2024 median)
 
 input group "Risk limits"
-input double InpFixedLots    = 0.01;   // Every trade's size in lots (minimum 0.01); 0 = size by the risk % below
-input double InpRiskPct      = 0.25;   // % of equity lost if a trade's stop is hit (only when the fixed size is 0)
+input double InpFixedLots    = 0;      // Every trade's size in lots; 0 = size by the risk % below (owner, 6 Nov 2026)
+input double InpRiskPct      = 0.5;    // % of equity lost if a trade's stop is hit (only when the fixed size is 0)
 input double InpMaxLeverage  = 3.0;    // One position's value capped at equity x this
 input double InpDailyLossPct = 2.0;    // No new entries after equity falls this % in a server day
+input double InpMaxDrawdownPct = 15.0; // Account stop: close and stop both EAs when equity falls this % below its peak (DG_PEAK); 0 = off
+input double InpMaxStopUsd   = 150.0;  // Skip a trade whose stop would cost more than this many dollars at its size; 0 = no cap (must match research/intraday.js MAX_STOP)
 
 input group "Risk per strategy, only when the fixed size is 0 (x the risk above; 1 = the same, 0.5 = half)"
 input double InpWNyOrb      = 1.0;     // 1 New York ORB
@@ -116,6 +125,7 @@ string   g_exitWhy[NS];                // an exit the EA is still trying to make
 uint     g_lastErr[NS];                // last failure journaled, per strategy (one row per new problem)
 long     g_skipDay[NS];                // last day a "too small to trade" skip was journaled
 ulong    g_posId[NS];                  // the position each strategy holds (mirrored in global variables)
+ulong    g_tpFixed[NS];                // the position whose take-profit is settled: exact, moved, or refused for good
 int      g_side[NS];
 long     g_flatDay = -1;
 int      g_flatMin = 23 * 60;
@@ -422,7 +432,8 @@ bool EntryAllowed(string &reason)
   }
 
 // Strategy k's size: the fixed InpFixedLots or, when that is 0, lots so that its stop costs its share of InpRiskPct.
-// Capped by leverage (a fixed size over the cap is not traded, not cut) and the broker's volume limits.
+// Capped by leverage (a fixed size over the cap is not traded, not cut) and the broker's volume limits. A trade whose
+// stop would cost more than InpMaxStopUsd at that size is not traded either.
 double LotsFor(const int k, const double dist, const double price, string &reason)
   {
    double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
@@ -444,6 +455,9 @@ double LotsFor(const int k, const double dist, const double price, string &reaso
      }
    lots = MathMin(lots, SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX));
    if(lots < SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN)) { reason = "position size below the minimum volume"; return 0; }
+   double cost = NormalizeDouble(0.01 * dist / tickSize * tickVal, 2);   // the stop's cost at 0.01 lots (1 oz): a width cap, as in the research
+   if(InpMaxStopUsd > 0 && cost > InpMaxStopUsd)
+     { reason = "its stop would cost $" + DoubleToString(cost, 2) + " at 0.01 lots, over the $" + DoubleToString(InpMaxStopUsd, 0) + " cap"; return 0; }
    return lots;
   }
 
@@ -607,6 +621,42 @@ void TrackFills()
               ", opened " + TimeToString(o, TIME_DATE | TIME_SECONDS) +
               (PositionGetDouble(POSITION_TP) > 0 ? ", take-profit " + Px(PositionGetDouble(POSITION_TP)) : ""));
       if(k == 3) WantDualThrust(MinOfDay(TimeCurrent()));        // its stop-and-reverse order
+     }
+  }
+
+// Every tick: each position's take-profit sits exactly its strategy's multiple of the risk taken, measured from the real
+// fill, as in the research. An order goes out with it measured from the price it was sent at (a stop order: its level),
+// so a fill a few cents away, or a gap past the level, is put right here. Refused for good: the order's own one stays.
+void FixTargets()
+  {
+   for(int k = 1; k < NS; k++)
+     {
+      ulong t; int side; datetime o;
+      if(!FindPos(k, t, side, o)) continue;
+      ulong id = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
+      if(g_tpFixed[k] == id) continue;
+      double entry = PositionGetDouble(POSITION_PRICE_OPEN), sl = PositionGetDouble(POSITION_SL), tp = PositionGetDouble(POSITION_TP);
+      double want = sl > 0 && entry != sl ? TpPrice(k, entry > sl ? 1 : -1, entry, sl) : 0;   // a long's stop is below it
+      if(want <= 0 || MathAbs(tp - want) < _Point / 2) { g_tpFixed[k] = id; continue; }
+      if(WaitingForQuote()) return;
+      trade.SetExpertMagicNumber(Magic(k));
+      if(trade.PositionModify(t, sl, want) && trade.ResultRetcode() == TRADE_RETCODE_DONE)
+        {
+         g_tpFixed[k] = id;
+         g_lastErr[k] = 0;
+         Journal(k, "TARGET", "take-profit moved from " + Px(tp) + " to " + Px(want) + ": " +
+                 DoubleToString(MathAbs(want - entry) / MathAbs(entry - sl), 2) + " x the risk from the fill at " + Px(entry));
+         continue;
+        }
+      uint rc = trade.ResultRetcode();
+      NoteRefusal(rc);
+      if(!Transient(rc)) g_tpFixed[k] = id;                       // refused for good (say, the price is already past it)
+      if(g_lastErr[k] != rc)
+        {
+         g_lastErr[k] = rc;
+         Journal(k, "ERROR", "take-profit move to " + Px(want) + " failed, retcode " + IntegerToString((int)rc) + " (" + trade.ResultRetcodeDescription() + ")" +
+                 (Transient(rc) ? "; will retry" : "; it stays at " + Px(tp)));
+        }
      }
   }
 
@@ -816,6 +866,8 @@ void Run()
    if(now == 0) return;
    if(g_tradesDay != DayOf(now)) CountTrades();
 
+   string stopWhy = DrawdownStop(InpMaxDrawdownPct);           // sets DG_KILL when the account is too far below its peak
+   if(stopWhy != "") Journal(0, "KILL_SWITCH", stopWhy);
    // Kill switch: global variable DG_KILL = 1 (F3 in MT5) closes everything and stops new trades.
    if(GlobalVariableCheck("DG_KILL") && GlobalVariableGet("DG_KILL") == 1)
      {
@@ -836,6 +888,7 @@ void Run()
       else if(g_exitWhy[k] != "") CloseStrat(k, g_exitWhy[k]);
      }
    if(m >= flat) { StandDown(); return; }
+   FixTargets();
    if(HistorySettling()) return;                               // everything above needs no bars, so it never waits
 
    // A new M15 bar: decide on the bar that just closed, then set this bar's breakout orders.
@@ -889,7 +942,7 @@ int OnInit()
      }
    if(InpFixedLots != 0 && InpFixedLots < 0.01)
       return INIT_PARAMETERS_INCORRECT;                        // a fixed size is never below 0.01 lots
-   if(InpTpNyOrb < 0 || InpTpAsian < 0 || InpTpDualThrust < 0 || InpTpRBreaker < 0 || InpTpMom16 < 0 || InpTpMom20 < 0)
+   if(InpTpNyOrb < 0 || InpTpAsian < 0 || InpTpDualThrust < 0 || InpTpRBreaker < 0 || InpTpMom16 < 0 || InpTpMom20 < 0 || InpMaxStopUsd < 0 || InpMaxDrawdownPct < 0 || InpMaxDrawdownPct > 50)
       return INIT_PARAMETERS_INCORRECT;
    if(InpRiskPct <= 0 || InpRiskPct > 1 || InpNarrow <= 0 || InpDailyLossPct <= 0)
       return INIT_PARAMETERS_INCORRECT;                        // more than 1% a trade is refused outright
@@ -904,6 +957,7 @@ int OnInit()
    ArrayInitialize(g_qDir, 0);
    ArrayInitialize(g_lastErr, 0);
    ArrayInitialize(g_skipDay, -1);
+   ArrayInitialize(g_tpFixed, 0);
    for(int k = 0; k < NS; k++)
      {
       g_exitWhy[k] = "";                                       // an unset string is NULL, not "": set them
@@ -924,7 +978,9 @@ int OnInit()
            (InpFixedLots > 0 ? "" : ", weights " + DoubleToString(InpWNyOrb, 2) + "/" + DoubleToString(InpWAsian, 2) + "/" + DoubleToString(InpWDualThrust, 2) + "/" +
            DoubleToString(InpWRBreaker, 2) + "/" + DoubleToString(InpWMom16, 2) + "/" + DoubleToString(InpWMom20, 2)) +
            ", take-profits " + DoubleToString(InpTpNyOrb, 1) + "/" + DoubleToString(InpTpAsian, 1) + "/" + DoubleToString(InpTpDualThrust, 1) + "/" +
-           DoubleToString(InpTpRBreaker, 1) + "/" + DoubleToString(InpTpMom16, 1) + "/" + DoubleToString(InpTpMom20, 1) +
+           DoubleToString(InpTpRBreaker, 1) + "/" + DoubleToString(InpTpMom16, 1) + "/" + DoubleToString(InpTpMom20, 1) + " from the fill" +
+           (InpMaxStopUsd > 0 ? ", no stop over $" + DoubleToString(InpMaxStopUsd, 0) : "") +
+           (InpMaxDrawdownPct > 0 ? ", account stop " + DoubleToString(InpMaxDrawdownPct, 0) + "% below the peak" : "") +
            ", demo account " + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)));
    return INIT_SUCCEEDED;
   }

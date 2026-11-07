@@ -18,6 +18,15 @@
  *   - cfg.targetR (H4 runs: 1.5): the EA's take-profit at the broker, that many
  *     strategy stops from the fill (exit reason TARGET). cfg.targetWait: after a
  *     target, that side waits for a close back inside the entry channel.
+ *   - cfg.maxStop (the EA's InpMaxStopUsd, 150): no entry whose strategy stop
+ *     would cost more than this at 0.01 lots (1 oz, so dollars = its distance).
+ *     The signal is dropped, as the EA drops it; the next bar can signal again.
+ *   - cfg.trail { at, dist, lock, broker } in R (default off): once the best price
+ *     since the fill (bar high, or bar low for a short) is `at` strategy stops
+ *     in profit, the stop follows `dist`
+ *     stops behind it (lock: moves to the fill once). Moved at each bar's close.
+ *     broker: the broker-side stop moves (fires inside a bar, exit TRAIL);
+ *     otherwise the strategy stop moves (checked on closes, as before).
  *
  * Results are in R (P&L ÷ the risk taken), which doesn't depend on leverage.
  * This is research only: nothing here trades.
@@ -74,8 +83,8 @@ function simulate(bars, cfg, ser) {
     if (pos) pos.bars++;
     // The broker-side stop (the EA's catastrophe stop, cfg.hardK ATRs out) fires inside the bar: long on the Bid low,
     // short on the Ask high. Filled at the stop, or at the open if the bar gapped through it.
-    if (pos && cfg.hardK && (pos.side === 1 ? k.l <= pos.hard : k.h + k.sp >= pos.hard)) {
-      close(pos, k, 'HARDSTOP', pos.side === 1 ? Math.min(k.o, pos.hard) : Math.max(k.o + k.sp, pos.hard));
+    if (pos && (cfg.hardK || pos.trailed) && (pos.side === 1 ? k.l <= pos.hard : k.h + k.sp >= pos.hard)) {
+      close(pos, k, pos.trailed ? 'TRAIL' : 'HARDSTOP', pos.side === 1 ? Math.min(k.o, pos.hard) : Math.max(k.o + k.sp, pos.hard));
       pos = null;
     }
     // cfg.targetR: a broker-side take-profit, cfg.targetR x the strategy stop from the fill. A limit order: its level
@@ -104,13 +113,25 @@ function simulate(bars, cfg, ser) {
       else if (k.c > xu) pending = { type: 'EXIT', why: 'CHANNEL' };
       else if (pos.bars >= cfg.maxBars) pending = { type: 'EXIT', why: 'TIME' };
     }
+    if (pos && cfg.trail) {                     // after this close's checks: the moved stop counts from the next bar
+      const best = pos.side === 1 ? k.h : k.l;  // bar highs and lows (Bid), as the EA reads them from its H4 bars
+      pos.best = pos.best === undefined ? best : pos.side === 1 ? Math.max(pos.best, best) : Math.min(pos.best, best);
+      if ((pos.best - pos.entry) * pos.side >= cfg.trail.at * pos.risk) {
+        const s = cfg.trail.lock ? pos.entry : pos.best - pos.side * cfg.trail.dist * pos.risk;
+        if (cfg.trail.broker) { if ((s - pos.hard) * pos.side > 0) { pos.hard = s; pos.trailed = true; } }
+        else if ((s - pos.stop) * pos.side > 0) pos.stop = s;
+      }
+    }
   }
   return trades;
 
   function open(sig, k) {
+    if (cfg.maxStop && sig.stopDist > cfg.maxStop) return null;     // over the cap: the EA journals a SKIP
     const side = sig.type === 'LONG' ? 1 : -1;
     // Buy at Ask (Bid + spread), sell at Bid; slippage against us either way.
-    const fill = side === 1 ? (k.o + k.sp) * (1 + SLIP) : k.o * (1 - SLIP);
+    // cfg.slipUsd (stress tests only, default 0): that many extra dollars of slippage on top, every non-limit fill;
+    // cfg.slipFn(t) (research/realism_lab.js): extra dollars drawn for this one fill.
+    const fill = (side === 1 ? (k.o + k.sp) * (1 + SLIP) : k.o * (1 - SLIP)) + side * ((cfg.slipUsd || 0) + (cfg.slipFn ? cfg.slipFn(k.t) : 0));
     // The EA sets its broker stop from the quote it sends the order at (Ask for a buy, Bid for a sell).
     const hard = (side === 1 ? k.o + k.sp : k.o) - side * (cfg.hardK || 0) * sig.stopDist / cfg.k;
     return { side, t: k.t, entry: fill, stop: fill - side * sig.stopDist, hard, risk: sig.stopDist, bars: 0, spreadIn: k.sp, swap: 0,
@@ -119,10 +140,10 @@ function simulate(bars, cfg, ser) {
   // px: the quote the exit trades at (Bid to sell a long, Ask to buy back a short); default this bar's open.
   function close(p, k, why, px, isLimit) {
     if (px === undefined) px = p.side === 1 ? k.o : k.o + k.sp;
-    const fill = isLimit ? px : px * (1 - p.side * SLIP);
+    const fill = isLimit ? px : px * (1 - p.side * SLIP) - p.side * ((cfg.slipUsd || 0) + (cfg.slipFn ? cfg.slipFn(k.t) : 0));
     const pnl = (fill - p.entry) * p.side + p.swap;     // per unit, swap included
     trades.push({ t: p.t, exitT: k.t, side: p.side, r: pnl / p.risk, risk: p.risk, why, bars: p.bars,
-                  costR: ((p.side === 1 ? p.spreadIn : k.sp) + p.entry * SLIP * 2) / p.risk });
+                  costR: ((p.side === 1 ? p.spreadIn : k.sp) + p.entry * SLIP * 2 + 2 * (cfg.slipUsd || 0)) / p.risk });
   }
 }
 

@@ -43,7 +43,7 @@ function st(tr) {
 const half = tr => ({ a: st(tr.filter(t => t.t < I.SPLIT)), b: st(tr.filter(t => t.t >= I.SPLIT)) });
 
 const m15 = R.load('XAUUSD.sml_M15.csv'), h4 = R.toH4(R.load('XAUUSD.sml_H1.csv'));
-const P = I.portfolio(m15);
+const P = I.portfolio(m15, { maxStop: 0, retired: true });   // without the $150 cap, as when these levels were chosen (30 Oct); its effect is measured below
 const intraday = (id, l) => I.backtest(m15, I.withTarget(P[id], l), I.COSTS.real);
 const swing = (l, wait) => R.simulate(h4, Object.assign({}, H4_CFG, { targetR: l || undefined, targetWait: wait })).filter(t => t.t >= H4_FROM);
 

@@ -381,7 +381,7 @@ drawdown $959 -> $986, worst day -$428 -> -$268, worst trade -$212 both ways. 20
 
 - A target does not limit a loss: the stop does, which is why the worst trade does not move. The lever for that is
   the stop's size. Skipping trades whose stop costs over $150 (40 of 2,690) takes the worst trade to -$127 and the
-  drawdown to $739; it is measured but not built.
+  drawdown to $739; built on 4 Nov (section 19).
 - The levels were tested on 2023-2026 only, the bars the research has. The 18-year figures in `Mt5.js` come from
   tester runs without targets, until the older eras are run again.
 - The H4 tester run now needs "1 minute OHLC", so the target fires inside the bar as it does live.
@@ -437,3 +437,155 @@ pending until they are done, and GoldIntraday holds its stop orders and cancels 
   broker's stop in place, and GoldIntraday's resting orders are left alone until then. The tester skips all of this. Fed
   the M1 history with the timer running, each EA's live path made the same journal as its tester path. A real restart
   has not tested it yet.
+
+## 19. A $150 stop cap, and every take-profit from the fill (owner decision, 4 Nov 2026)
+
+**The cap.** Neither EA takes a trade whose stop would cost more than $150 at its size (`InpMaxStopUsd`, 0 = none).
+It is measured before anything is sent, where the research measures it: a resting stop order from its level to its
+stop, a market entry from its stop distance, and DonchianGold from its 2 x ATR strategy stop, not the 4 x ATR broker
+stop. Over the cap the entry ends in a SKIP row ("its stop would cost $163.40, over the $150 cap"), in GoldIntraday once
+a day per strategy. Nothing else changes: a DonchianGold signal dropped this way can come again on the next bar, as
+it can in the research.
+
+It is built into both research engines, not filtered afterwards: `S.maxStop` in `research/intraday.js` (`MAX_STOP`,
+set by `portfolio()`), `cfg.maxStop` in `research/daytrade.js` and `research/parity_mt5.js`. At 0.01 lots it skips 40
+of 2,690 trades in 2023-2026, 38 Dual Thrust and 2 H4, all in 2025-26:
+
+| 2025-26, 0.01 lots | Without the cap | With it |
+|---|---:|---:|
+| Profit | +$4,698 | +$4,552 |
+| Worst drawdown | $986 | $739 |
+| Worst day | -$268 | -$236 |
+| Worst trade | -$212 | -$127 |
+| Largest stop | $735 | $150 |
+
+- 2023-24 does not change (PF 1.23, +$1,512, drawdown $368): its largest stop was $106.
+- Inside the engines it gives exactly what filtering the trades afterwards gave in section 17: no skipped trade moved a
+  later one.
+- $150 was picked after $100, $150 and $200 had been measured on both periods, so 2025-26 is no unseen test of it. It is
+  a limit on what one trade can lose, not an edge.
+- `research/tp_lab.js` runs without the cap (`portfolio(m15, { maxStop: 0 })`), so its 30 Oct results still reproduce.
+
+**The take-profit from the fill.** The research has always measured a target from the fill: the fill plus the
+multiple x (fill - stop). The EAs measured it from the price the order was sent at, a stop order's from its level, so
+slippage changed the ratio. The New York ORB sell stop at 3942.150 on 3 Nov filled $1.085 lower, at 3941.065, and its
+1:4 became 1:3.3 (target 3914.070). Now each EA puts the take-profit right once the position is there (`FixTargets()`
+in GoldIntraday, `FixTarget()` in DonchianGold): exactly the strategy's multiple of the risk from the real fill. On
+that trade, 3908.645. The stop is never touched.
+
+- It runs on every tick, before the history wait, and sends only when the level differs. A "market closed" reply waits
+  for a new quote, like every other send. A refusal for good (say the price is already past the new level) leaves the
+  order's own take-profit in place, with one ERROR row. Each move is a TARGET row in the journal.
+- DonchianGold measures from its strategy stop, 2 x ATR from the fill, so its target is 1.5 x that: 3 x ATR.
+- Live, most take-profits move by a few cents to a dollar. In the tester an order fills at its price, so a move happens only
+  when a bar gaps past a stop order's level, where the research also measures from the gapped fill. Parity should not
+  change, but the Strategy Tester has not run these builds yet (DonchianGold 1.06, GoldIntraday 1.15).
+- `tests/run.js` drives both on the fake broker with the 3 Nov and 2 Nov trades, the cap at exactly $150.00 and
+  $150.01, a refusal, and a closed market. Ten deliberate breaks of the new code were each caught.
+
+## 20. A trailing stop on H4, not on the intraday six (owner request, 5 Nov 2026)
+
+The owner asked for a trailing stop. `research/trail_lab.js` tested seven choices, fixed before running, on the EAs as
+they trade now (0.01 lots, take-profits from the fill, the $150 cap): none; move the stop to the fill once the trade is
+0.5R or 1R up; or trail it 0.5R or 1R behind the best price since the fill once the trade is 0.5R or 1R up. R is the
+strategy's own stop distance. Every take-profit stays. Rules: one choice for all six intraday strategies together
+(moved at each M15 close), and one for H4, where either the strategy stop (checked on 4-hour closes) or the broker stop
+(fires inside a bar) moves, moved at each 4-hour close. The pick is the best profit / worst drop on 2023-2024 only, and
+it must beat "none" there; 2025-2026, seen once, must then show a better profit / worst drop and at least 90% of the
+profit.
+
+- **Intraday: none.** Every trailing choice made less money than "none" in both periods, so nothing was picked. Their
+  targets are close (1.5R on four of them) and their trades are short: a trail mostly cuts trades that would have gone
+  on to the target.
+- **H4: the broker stop, 0.5R behind the best price from +1R.** On 2023-2024 it tied with 1R behind (2.413 against
+  2.411 profit per dollar of drawdown, both well above 1.60 for none); the rule took the higher. 2025-2026:
+
+| H4, 0.01 lots | None | Trailing | 
+|---|---:|---:|
+| 2023-24 profit / worst drop | +$261 / $163 | +$362 / $150 |
+| 2025-26 profit / worst drop | +$2,153 / $367 | +$2,263 / $263 |
+| 2025-26 trades, win rate | 95, 55% | 108, 67% |
+| 2025-26 stopped by the trail | — | 37% |
+
+  All seven strategies together, 2025-26: +$4,552 / $739 becomes +$4,662 / $607; 2023-24: +$1,512 / $368 becomes
+  +$1,614 / $332. The worst trade is unchanged ($127): a trail never limits a loss, only a giveback.
+- Caveats. About 90 H4 trades a half is a small sample. On 2023-2024 only the +1R start helped (starting at +0.75R or
+  +1.25R did less well or worse than none); on 2025-2026 every nearby setting beat none. The older eras (2008-2014,
+  2015-2022) are the honest next test and need the Strategy Tester: `InpTrailAtR = 0` runs the EA without it.
+- How the EA does it (`TrailStop()`, DonchianGold 1.07, inputs `InpTrailAtR = 1.0`, `InpTrailDistR = 0.5`): after each
+  4-hour bar has been decided it reads the closed bars since the fill bar, takes the highest high (lowest low for a
+  short) and, once that is 1R in profit, moves the broker stop to 0.5R behind it. Only ever tighter; a gap past the
+  new level closes at market (EXIT_TRAIL), which is what the research's fill at the open is. Worked out afresh from the
+  bars each time, so a restart loses nothing. A broker-stop close after a move is journaled EXIT_TRAIL, before one
+  EXIT_HARDSTOP. With the trail on, a lost strategy stop is rebuilt from the signal bar's ATR, not from the broker stop.
+- The research reads shorts' best price from the Bid low, as the EA reads it from its bars (`research/daytrade.js`
+  `cfg.trail`; the intraday engine has `S.trail` too, for the study only). Tests: 249 PASS; eleven deliberate breaks of
+  the new code were each caught. The Strategy Tester has not run 1.07 yet.
+
+## 21. Adding to a winning H4 trade: tested, not built (owner request, 5 Nov 2026)
+
+The owner asked for more entries when the trend is going well, within the loss the account can bear. `research/pyramid_lab.js` tested it on H4 as it trades now (trail included), fixed before running: add 0.01 lots on (A) a new breakout close, the entry rule again, or (B) a close 1R beyond the newest entry; at most 2 or 3 positions; each add a trade of its own (own stop, take-profit, trail), the 10-bar channel exit closing them all; an add only if the loss with every open stop hit, the add included, stays within $150 (a trailed stop counts its locked-in gain). Its engine with adding off gives `research/daytrade.js`'s 222 trades exactly. Same pick and pass rules as section 20.
+
+| H4, 0.01 lots a position | None | A: new breakout, up to 3 (picked) |
+|---|---:|---:|
+| 2023-24 profit / worst drop | +$362 / $150 | +$834 / $250 |
+| 2025-26 profit / worst drop | +$2,263 / $263 | +$3,168 / $604 |
+| 2025-26 worst day | -$125 | -$190 |
+
+- **FAIL:** on 2025-26 the drawdown grows faster than the profit (profit per dollar of drawdown 5.25 against 8.61). 95 of 244 adds were stopped out: a breakout that comes again is often the top. Up to 2: +$3,030 / $423, also worse. B made less than none on 2023-24 (+$117 / $297).
+- Not built: both EAs keep one position per strategy. The $150 budget is the owner's per-trade cap; other budgets were not tried.
+
+## 22. Stress test: worst drawdowns, worse fills, volatile days (owner request, 6 Nov 2026)
+
+The owner asked for each strategy's worst drawdown, whether the backtests include slippage and optimization, and whether the strategies survive imperfect entries and high pressure. `research/stress_lab.js` runs all seven as the EAs trade now (0.01 lots, take-profits from the fill, $150 cap, H4 on 1.06 without the trail) from 2023-04-03 to the end of `data/`, under five fill levels fixed before running. `research/stress_chart.js` draws the balance, the drawdown and gold's monthly candles into `data/reports/stress_chart.html` (git-ignored).
+
+- **Slippage:** the research already charges the bar's real spread plus $0.05 a side (intraday) or 0.01% a side (H4, about $0.20-0.40). The Strategy Tester charges the spread only. Live demo stop-order entries, 12 Oct - 5 Nov 2026, slipped $0.29 on average (10 fills, median $0.13, worst $1.09), about six times the intraday assumption.
+- **Optimization:** the Strategy Tester's optimizer is never used. Settings were chosen by hand on 2023-24 from short lists fixed in advance, then judged on 2025-26. That is still selection: every lab that looks at 2025-26 uses it up a little, so it is no longer truly unseen.
+
+| 2023-04 to 2026-10, $ at 0.01 lots | Net | Worst drawdown | MC 99% | Net with +$0.50 a side |
+|---|---:|---:|---:|---:|
+| All seven | +$5,822 | $739 (7.4%) | $1,568 | +$3,273 |
+| H4 Donchian | +$2,413 | $367 | $835 | +$2,216 |
+| Dual Thrust | +$1,001 | $291 | $553 | +$709 |
+| NY ORB | +$444 | $349 | $838 | -$153 |
+| MOM_20 | +$435 | $225 | $591 | -$93 |
+
+- **Fragile to fills:** NY ORB and MOM_20 lose money at +$0.50 a side, MOM_16 and Asian Narrow at +$1.00. H4, Dual Thrust and R-Breaker barely notice.
+- **Profit comes from volatile days only:** on the 182 volatile days of 973 (range over 1.5x the median of the previous 60) the book made +$6,004; on the other days -$182.
+- **Era:** the book lost $29 in 2023 (from April); H4 lost $117-178 over 2015-2022 in the Strategy Tester. The profit so far comes from the 2024-26 gold trend.
+- **Retired (owner decision, 6 Nov 2026):** NY ORB and momentum at 20:00, the two that lost money at +$0.50 a side. GoldIntraday 1.16 has both off by default; `research/intraday.js` RETIRED drops them from `portfolio()` (`{ retired: true }` brings them back for the older studies, which keep their numbers). The book of five: +$4,943, worst drawdown $678, MC 99% $1,164; at +$1.00 a side +$2,343 (seven: +$964). `node research/stress_lab.js --all` reproduces the table above.
+- **1% risk a trade (owner asked, 6 Nov 2026), five strategies:** worst drawdown 19% at research costs, 32% with live-like fills, 43% at +$0.50 a side; 0.25% gives 5% / 8% / 11%. Up to 4 trades are open at once. Not built.
+- **Ranging:** on an efficiency ratio of the last 10 daily closes (under 0.25 range, over 0.45 trend), 45% of days were ranging; the book still made 0.12 R a day then (0.32 on trend days). The two mean-reversion strategies tested on 30 Oct (RSI(2) pullback, Asian Bollinger fade) lost money even at research costs.
+
+## 23. 0.5% risk a trade and a 15% account stop (owner decision, 6 Nov 2026)
+
+The owner chose 0.5% risk a trade (section 22: 1% gave a 19-43% worst drop) and a 15% account stop. DonchianGold 1.08 and GoldIntraday 1.16 default to `InpFixedLots = 0`, `InpRiskPct = 0.5` (the broker's volume step is 0.001 lots, so a $77 stop gets 0.006 lots) and `InpMaxDrawdownPct = 15`.
+
+- **Account stop:** `mt5/AccountGuard.mqh`, included by both EAs. `DrawdownStop()` keeps the highest equity seen in the terminal global variable `DG_PEAK`; when equity falls more than 15% below it, it sets `DG_KILL = 1` (saved to disk at once) and returns one KILL_SWITCH row. Both EAs call it on every run just before their kill switch, which closes their trades and sends nothing new. The owner restarts by setting `DG_KILL` to 0 in F3 (and deleting `DG_PEAK` to count from the current equity).
+- **The $150 cap is now a width:** the stop's cost at 0.01 lots (1 oz), whatever the size, so it skips the same trades as `maxStop` in the research. At 0.5% the dollar risk is capped by the size itself.
+- The research still simulates 1 oz a trade: decisions do not depend on the size, so parity is unchanged. The daily loss limits (3% DonchianGold, 2% GoldIntraday) are not modelled; at 0.5% the five strategies' worst research day was 1.6%.
+- With live-like fills (+$0.25 a side) the five strategies' worst drop at 0.5% was 16.1% (section 22), so the 15% stop would have fired once in 2023-26.
+
+## 24. Random fills instead of one fixed cost (owner request, 6 Nov 2026)
+
+The owner asked that the backtest not be perfect, with the same fixed costs every time. `research/realism_lab.js` runs the book as it trades now (five strategies, H4 with the trail, 0.5% risk = $50 a 1 R) 200 times; each fill that is not a take-profit draws its own extra slippage from the live demo's 10 stop-order fills ($0.02 to $1.09, mean $0.29), tripled within 30 minutes of a high-importance US release, and 2% of fills are late ($3 more). This comes on top of the research's own costs. `cost.slipFn` (intraday.js) and `cfg.slipFn` (daytrade.js) carry the draw; both default to none.
+
+| 2023-04 to 2026-10, 0.5% risk | Research costs | Random fills: worst 5% | median | best 5% |
+|---|---:|---:|---:|---:|
+| Net profit on $10,000 | +$7,654 | +$3,713 | +$4,184 | +$4,688 |
+| Worst drawdown | 8.9% | 21.3% | 18.2% | 15.2% |
+
+- **The 15% account stop fired in 192 of 200 runs.** Sizing by risk puts more ounces on tight stops, so each dollar of slippage costs more R. No run lost money; Asian Narrow was below 0 in 10 of 200 runs, the others never.
+- Not acted on: the owner chose 0.5% before this was known. At 0.25% every drawdown halves (median about 9%).
+
+## 25. Watchdog (owner request, 6 Nov 2026)
+
+`Watchdog.js` checks the EAs every 15 minutes from Google's side and writes the MT5 Watchdog tab. The owner first asked for no notifications, then (same day) for the account stop to reach them: every ALERT goes to their Telegram once (`watchdogAlert_`, keyed so a persisting condition is not resent), with the words "nothing restarts until we decide together". The 07:30 timer sends a daily MT5 report instead of the gold morning map (`mt5DailyReportText_`), after each broker trading day. It only reads, and never copies a START row (it holds the account number). ALERT: a KILL_SWITCH row, a position without a stop, equity 15% below its peak. WARN: an EA silent over 25 minutes while gold trades, ERROR or WARN rows, equity 10% below its peak, stop orders slipping over $0.60 on average (last 20 fills), a retired strategy entering, an EA started without 0.5% risk or the account stop. Apps Script cannot and does not touch MT5: the EAs protect themselves.
+
+## 26. Trading the news, and the news as a bias: tested, not built (owner request, 6 Nov 2026)
+
+The owner argued that news gives faster momentum and could set the day's bias. `research/news_lab.js` tested both on M1 bars since 2023 with rules fixed before running.
+
+- **A. Momentum after the big four US releases** (jobs report, CPI, Fed decision, press conference): wait 5 or 15 minutes, trade the way gold moved since the last price before the release, stop at the far side of that move, take-profit 1.5R, out after 60 or 120 minutes; fills drawn as in section 24 with the news multiplier. Picked on 2023-24: 15 minutes, 120 minutes (median -9.6 R, PF 0.76). 2025-26: median -1.3 R, PF 0.96, above 0 in 21% of runs: **FAIL**. With $0.05 fills (`--ideal`, for information) the same rule makes +2.4 R / +7.2 R (PF 1.07 / 1.26): the momentum is there, but the fills at news time cost more than it pays.
+- **B. The surprise (actual - forecast) as a bias**, expecting gold to move against a strong jobs or CPI number: right 54% / 76% of the time 60 minutes after the jobs report (2023-24 / 2025-26), 60% / 36% after CPI; by the day's end 46% / 57% and 65% / 57%. 14 to 24 surprises a half: not stable enough to set a bias. The Fed decision has no forecast in the calendar.
+- Not tested yet: the spread guard. The news multiplier (x3) is a guess until the demo has fills near releases; the watchdog's slippage figure will show it.

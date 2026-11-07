@@ -14,7 +14,8 @@ column, property or trigger — other code (and the web panel) reads them by nam
 | `runLab` | 02:00 | runs QUEUED experiments within a 4.5-min budget |
 | `runChallenger` | every 15 min | challenger: each market acts once per closed `CHALLENGER.intervalMinutes` candle; skips without fetching otherwise; gold backs off 30 min when no new bar (weekends); stops after 4 min and catches up next run |
 | `processTelegramQueue` | one-off, ~1s after a Telegram message | answers queued questions |
-| `runMorningMap` | daily 07:30 (script time zone) | the gold morning map to the owner's Telegram; silent when the newest hourly bar is over 2 h old (weekends, holidays). Installed by **Morning map: connect Telegram**, not by `setup()` |
+| `runWatchdog` | every 15 min | `Watchdog.gs`: checks both EAs (heartbeats while gold trades, KILL_SWITCH / ERROR / WARN rows, drawdown from the peak, positions without a stop, stop-order slippage, retired strategies, the 0.5% / 15% settings) and writes the MT5 Watchdog tab. Reads only. Installed by itself: `watchdogEnsure_()` runs at the start of `runMorningMap`; `setup()` and switching the old system off keep it |
+| `runMorningMap` | daily 07:30 (script time zone) | since 6 Nov 2026 the daily MT5 report to the owner's Telegram (`mt5DailyReportSend_` in Watchdog.gs: status, equity and drawdown, trades closed in 24 h, open positions, slippage, the watchdog's findings), Tuesday to Saturday; `MORNING.send = 'map'` brings back the gold morning map, which is silent when the newest hourly bar is over 2 h old (weekends, holidays). Installed by **Morning map: connect Telegram**, not by `setup()` |
 
 `setup()` deletes **all** triggers first (except `runMorningMap`), then installs these. Re-run it after adding a job.
 `oldSystemOff()` also leaves `runMorningMap` alone.
@@ -42,6 +43,7 @@ Sheets marked *overwritten* are replaced on every run; everything else is append
 | MT5 Summary | `handleMt5_` (Mt5.gs) | *overwritten*: the page to read for the two MT5 EAs: account, "is it running?", per strategy vs backtest, last 10 trades, balance chart (data in hidden K:L). First tab |
 | MT5 Strategies | `mt5WriteStrategies_` | *overwritten* when asked (menu Rebuild) or when the clocks change: every strategy in plain English (at a glance, the rules, one card each with its backtest record), times in the owner's clock. Text lives in `MT5_STRATEGIES` / `MT5_RULES` (Mt5.gs) and must match the EAs |
 | MT5 Trades | `handleMt5_` | *overwritten*: one row per EA trade (open ones first, yellow), R, P&L, slippage of stop orders |
+| MT5 Watchdog | `runWatchdog` | row 2: the status now (OK / WARN / ALERT) and what was found; from row 5 one row per change, and one an hour, newest first, 300 kept |
 | MT5 Log | `handleMt5_` | every journal line the EAs sent, once each (`Id` = EA:line:time); the source for the two sheets above |
 | History | `buildHistory`, `updateHistory`, `importTradingViewCsv` | `t_ms, time_utc, open, high, low, close, volume` |
 | BT_Summary, BT_Trades, BT_Equity, BT_Sweep, BT_WalkForward, BT_MonteCarlo, BT_Compare, BT_LiveVsBacktest | backtest stages | *overwritten* each run |
@@ -65,6 +67,7 @@ columns at the end is safe.
 | `DASHBOARD_URL` | web app link ending `/dev` (daily panel) — used by Show dashboard URL and Check installation | owner |
 | `WEBHOOK_URL` | web app link ending `/exec` (TradingView/Telegram, and the MT5 EAs' results) | owner |
 | `MT5_KEY` | secret — the key both EAs send with their journals; created by MT5 gold EAs → Connect MT5 | menu |
+| `WATCHDOG_STATE` | JSON: the highest equity the watchdog has seen and how many MT5 Log rows it has read | `runWatchdog` |
 | `MT5_STATUS` | JSON per EA: last contact, equity, balance, open positions, floating P&L | `handleMt5_` |
 | `MT5_STRAT_DONE` | version + clock shift the MT5 Strategies tab was last written for | `mt5WriteStrategies_` |
 | `OLD_SYSTEM_OFF` | ms timestamp: the old Apps Script trading system is switched off (no timers, old tabs hidden, short menu) | `oldSystemOff` / `oldSystemOn` |

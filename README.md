@@ -33,7 +33,8 @@ so the live results can be checked against the backtests.
 - **Rules, not opinions:** every entry, stop and exit is a fixed rule written in code. Nobody
   touches the trades.
 - **Fixed trade size:** every trade is 0.01 lots (1 ounce of gold), so each $1 the price moves is
-  $1. The stop and a take-profit sit at the broker from the moment the trade opens.
+  $1. The stop and a take-profit sit at the broker from the moment the trade opens, and no trade
+  is taken if its stop would cost more than $150.
 - **Two robots:**
   - **DonchianGold** trades big trends on the 4-hour chart and holds for days.
   - **GoldIntraday** runs six short-term strategies on the 15-minute chart, and every trade is
@@ -181,9 +182,16 @@ Both robots enforce these in code:
 - **Gold only.** They refuse any other chart.
 - **Every order has its stop loss and take-profit at the broker** from the moment it opens. The stop
   limits what a trade can lose; the take-profit only banks a gain. Its level for each strategy was
-  chosen on 2023-24 data (`research/tp_lab.js`).
+  chosen on 2023-24 data (`research/tp_lab.js`). Once a trade fills, its take-profit is set again
+  from the real fill price, so the reward is exactly that multiple of the risk.
 - **One position per strategy.** No adding to losing trades, no martingale, no doubling up.
 - **Fixed size:** 0.01 lots a trade, never less. What a trade can lose is the distance to its stop.
+- **$150 stop cap:** a trade whose stop would cost more than $150 is skipped. In 2023-26 that was
+  40 of 2,690 trades, nearly all Dual Thrust on its wildest days.
+- **Trailing stop on the 4-hour robot only:** once a DonchianGold trade is one stop-distance in
+  profit, its broker stop follows half a stop-distance behind the best price. Tested on 2023-24,
+  confirmed on 2025-26 (`research/trail_lab.js`); on the six intraday strategies every trailing
+  rule tried made less money, so they don't trail.
 - **Intraday trades close by 23:00 broker time**, so they pay no overnight swap.
 - **Daily loss limit:** no new intraday trades after the account falls 2% in one day.
 - **Emergency stop:** in MetaTrader press F3, then add a global variable `DG_KILL` with value 1.

@@ -9,8 +9,12 @@
 //| the MT5 Strategy Tester against that script.                     |
 //|                                                                  |
 //| Safety (CLAUDE.md rule 1): refuses to run on a non-demo account, |
-//| every order carries a broker stop loss and take-profit, one      |
-//| position at a time,                                              |
+//| every order carries a broker stop loss and take-profit (set      |
+//| again from the real fill, so the reward is exactly InpTpR x the  |
+//| strategy stop), no entry whose stop would cost over $150, one    |
+//| position at a time, a broker stop that trails 0.5 x the strategy |
+//| stop behind the best price once a trade is 1 x it in profit      |
+//| (research/trail_lab.js),                                         |
 //| no averaging down, no martingale, daily loss limit, kill switch. |
 //|                                                                  |
 //| Gold closes for about an hour at server midnight and for the     |
@@ -23,11 +27,12 @@
 //| this EA (broker stop, stop-out, a human) is journaled as such.   |
 //+------------------------------------------------------------------+
 #property copyright   "Donchian Analyst (personal research)"
-#property version     "1.05"
+#property version     "1.08"
 #property description "Donchian breakout on gold, long and short. Demo accounts only."
 
 #include <Trade\Trade.mqh>
 #include "SheetSync.mqh"
+#include "AccountGuard.mqh"
 
 input group "Strategy (must match research/daytrade.js)"
 input ENUM_TIMEFRAMES InpTimeframe  = PERIOD_H4; // Bar size the rules run on
@@ -41,13 +46,17 @@ input bool            InpAllowLong  = true;      // Take long breakouts
 input bool            InpAllowShort = true;      // Take short breakdowns
 
 input group "Risk limits"
-input double InpFixedLots    = 0.01; // Every trade's size in lots (minimum 0.01); 0 = size by the risk % below
-input double InpRiskPct      = 1.0;  // % of equity lost if the strategy stop is hit (only when the fixed size is 0)
+input double InpFixedLots    = 0;    // Every trade's size in lots; 0 = size by the risk % below (owner, 6 Nov 2026)
+input double InpRiskPct      = 0.5;  // % of equity lost if the strategy stop is hit (only when the fixed size is 0)
 input double InpMaxLeverage  = 2.0;  // Position value capped at equity x this
 input double InpHardStopAtr  = 4.0;  // Broker stop loss, ATRs from the fill (catastrophe stop)
-input double InpTpR          = 1.5;  // Take-profit at the broker, x the strategy stop; 0 = none (must match research/parity_mt5.js)
+input double InpTpR          = 1.5;  // Take-profit at the broker, x the strategy stop from the fill; 0 = none (must match research/parity_mt5.js)
+input double InpMaxStopUsd   = 150.0; // Skip an entry whose strategy stop would cost more than this many dollars at its size; 0 = no cap (must match research/parity_mt5.js)
+input double InpTrailAtR     = 1.0;  // Trailing stop: starts once the trade is this many strategy stops in profit; 0 = off (must match research/parity_mt5.js)
+input double InpTrailDistR   = 0.5;  // Trailing stop: the broker stop follows this many strategy stops behind the best price since the fill
 input double InpDailyLossPct = 3.0;  // No new entries after equity falls this % in a server day
 input int    InpMaxTradesDay = 2;    // Max entries per server day
+input double InpMaxDrawdownPct = 15.0; // Account stop: close and stop both EAs when equity falls this % below its peak (DG_PEAK); 0 = off
 
 input group "Housekeeping"
 input long   InpMagic        = 20261009; // Identifies this EA's positions
@@ -57,8 +66,10 @@ input int    InpDeviationPts = 50;       // Max price deviation for market order
 CTrade trade;
 string GVP;                    // global-variable prefix, per magic number
 const string JOURNAL = "DonchianGold_journal.csv";
-// Exit reasons, stored by index while an exit waits to be retried (0 = none pending).
-string EXIT_NAMES[] = { "", "EXIT_STOP", "EXIT_CHANNEL", "EXIT_TIME", "KILL_SWITCH", "EXIT_RETRY" };
+// Exit reasons, stored by index while an exit waits to be retried (0 = none pending). New ones go at the end, so a
+// pending exit saved by an older build keeps its meaning.
+string EXIT_NAMES[] = { "", "EXIT_STOP", "EXIT_CHANNEL", "EXIT_TIME", "KILL_SWITCH", "EXIT_RETRY", "EXIT_TRAIL" };
+const int EXIT_RETRY_CODE = 5;
 // Later than this into its bar an entry was missed, not delayed (PC off, connection lost): the research only measures
 // entries at the bar's first price. The longest genuine wait in 2023-2026 is 2 minutes (quotes at 01:03, orders at 01:05).
 const int ENTRY_LATE_MIN = 15;
@@ -72,6 +83,10 @@ bool   g_waitSaid  = true;     // the journal already says why orders wait
 datetime g_dealWaitFrom = 0;   // when a position was first seen gone with its closing deal not in the history yet
 datetime g_settleFrom = 0;     // the last start, sleep or lost connection: MT5 has been catching up on bars since then
 datetime g_lastRun = 0;        // the timer runs Run() every 30 seconds, so a long pause here means the PC slept
+ulong  g_tpFixed = 0;          // the position whose take-profit is settled: exact, moved, or refused for good
+uint   g_tpErr = 0;            // the last take-profit failure journaled
+double g_trailRefused = 0;     // a trailing-stop level the broker refused for good: not sent again
+uint   g_trailErr = 0;         // the last trailing-stop failure journaled
 
 //--- persistent state: terminal global variables survive restarts --------
 double GVGet(const string name, const double def) { string k = GVP + name; return GlobalVariableCheck(k) ? GlobalVariableGet(k) : def; }
@@ -101,7 +116,7 @@ bool Transient(const uint rc)
 int ExitCode(const string why)
   {
    for(int i = 1; i < ArraySize(EXIT_NAMES); i++) if(EXIT_NAMES[i] == why) return i;
-   return ArraySize(EXIT_NAMES) - 1;                              // EXIT_RETRY
+   return EXIT_RETRY_CODE;
   }
 
 string ExitName(const int code) { return code > 0 && code < ArraySize(EXIT_NAMES) ? EXIT_NAMES[code] : "EXIT_RETRY"; }
@@ -225,7 +240,7 @@ bool FindPosition(ulong &ticket, int &side, double &openPrice)
 
 void ClearTradeState()
   {
-   GVDel("stop"); GVDel("sigbar"); GVDel("side"); GVDel("posid");
+   GVDel("stop"); GVDel("sigbar"); GVDel("side"); GVDel("posid"); GVDel("trailed");
    GVDel("exit_pending"); GVDel("exit_tries"); GVDel("exit_err");
    GlobalVariablesFlush();
   }
@@ -270,7 +285,7 @@ bool ReportOutsideClose(const int pendingExit)
          long entry = HistoryDealGetInteger(d, DEAL_ENTRY);
          if(d == 0 || (entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_OUT_BY)) continue;
          long reason = HistoryDealGetInteger(d, DEAL_REASON);
-         if(reason == DEAL_REASON_SL) ev = "EXIT_HARDSTOP";
+         if(reason == DEAL_REASON_SL) ev = GVGet("trailed", 0) != 0 ? "EXIT_TRAIL" : "EXIT_HARDSTOP";
          else if(reason == DEAL_REASON_TP) { ev = "EXIT_TARGET"; GVSet("tp_wait", GVGet("side", 0)); }
          else if(reason == DEAL_REASON_SO) ev = "EXIT_STOPOUT";
          else if(reason == DEAL_REASON_CLIENT || reason == DEAL_REASON_MOBILE || reason == DEAL_REASON_WEB) ev = "EXIT_MANUAL";
@@ -350,6 +365,13 @@ bool OpenPosition(const int dir, const double atr, const datetime sigBar)
      }
    lots = MathMin(lots, SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX));
    if(lots < SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN)) { Journal("SKIP", "position size below the minimum volume"); return false; }
+   double cost = NormalizeDouble(0.01 * stopDist / tickSize * tickVal, 2);   // the stop's cost at 0.01 lots (1 oz): a width cap, as in the research
+   if(InpMaxStopUsd > 0 && cost > InpMaxStopUsd)
+     {
+      Journal("SKIP", (dir == 1 ? "long" : "short") + " entry: its stop would cost $" + DoubleToString(cost, 2) + " at 0.01 lots, over the $" +
+              DoubleToString(InpMaxStopUsd, 0) + " cap");
+      return false;
+     }
 
    double margin = 0;
    ENUM_ORDER_TYPE type = dir == 1 ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
@@ -395,6 +417,83 @@ bool OpenPosition(const int dir, const double atr, const datetime sigBar)
 
 void ClearEntry() { GVDel("entry_dir"); GVDel("entry_bar"); GVDel("entry_atr"); GVDel("entry_err"); }
 
+// Every tick with a position: its take-profit sits exactly InpTpR x the strategy stop from the real fill, as in the
+// research. The order goes out with it measured from the price it was sent at, so a fill a few cents away is put right
+// here. Refused for good: the order's own one stays.
+void FixTarget(const ulong ticket, const double openPrice)
+  {
+   if(InpTpR <= 0 || !PositionSelectByTicket(ticket)) return;
+   ulong id = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
+   double stop = GVGet("stop", 0);
+   if(g_tpFixed == id || stop == 0) return;                       // a missing strategy stop is rebuilt at the next bar first
+   double sl = PositionGetDouble(POSITION_SL), tp = PositionGetDouble(POSITION_TP);
+   double want = NormalizeDouble(openPrice + InpTpR * (openPrice - stop), _Digits);
+   if(MathAbs(tp - want) < _Point / 2) { g_tpFixed = id; return; }
+   if(WaitingForQuote()) return;
+   if(trade.PositionModify(ticket, sl, want) && trade.ResultRetcode() == TRADE_RETCODE_DONE)
+     {
+      g_tpFixed = id;
+      g_tpErr = 0;
+      Journal("TARGET", "take-profit moved from " + DoubleToString(tp, _Digits) + " to " + DoubleToString(want, _Digits) + ": " +
+              DoubleToString(InpTpR, 1) + " x the strategy stop from the fill at " + DoubleToString(openPrice, _Digits));
+      return;
+     }
+   uint rc = trade.ResultRetcode();
+   NoteRefusal(rc);
+   if(!Transient(rc)) g_tpFixed = id;                             // refused for good (say, the price is already past it)
+   if(g_tpErr != rc)
+     {
+      g_tpErr = rc;
+      Journal("ERROR", "take-profit move to " + DoubleToString(want, _Digits) + " failed, retcode " + IntegerToString((int)rc) +
+              " (" + trade.ResultRetcodeDescription() + ")" + (Transient(rc) ? "; will retry" : "; it stays at " + DoubleToString(tp, _Digits)));
+     }
+  }
+
+// Trailing stop (research/trail_lab.js: chosen on 2023-2024, passed on 2025-2026). Once the best price since the fill
+// (a closed bar's high, or low for a short) is InpTrailAtR x the strategy stop in profit, the broker stop follows
+// InpTrailDistR x it behind that price. Read from closed bars only, after the newest one has been decided, so a move
+// counts from the next bar, as in research/daytrade.js. It only ever tightens and the take-profit stays where it is.
+// Worked out afresh each time from the bars, so a restart loses nothing. Price already beyond it (a gap): closed now.
+void TrailStop(const ulong ticket, const int side, const double openPrice)
+  {
+   if(InpTrailAtR <= 0 || !PositionSelectByTicket(ticket)) return;
+   double stop = GVGet("stop", 0);
+   if(stop == 0) return;                                          // a missing strategy stop is rebuilt at the next bar first
+   double risk = MathAbs(openPrice - stop);
+   int shift = iBarShift(_Symbol, InpTimeframe, (datetime)PositionGetInteger(POSITION_TIME));   // the bar it was filled in
+   if(shift < 1 || risk <= 0) return;                             // that bar has not closed yet
+   MqlRates r[];
+   if(CopyRates(_Symbol, InpTimeframe, 1, shift, r) != shift) return;   // the closed bars since the fill; history not ready: next tick
+   double best = side == 1 ? -DBL_MAX : DBL_MAX;
+   for(int i = 0; i < shift; i++) best = side == 1 ? MathMax(best, r[i].high) : MathMin(best, r[i].low);
+   if((best - openPrice) * side < InpTrailAtR * risk) return;
+   double want = NormalizeDouble(best - side * InpTrailDistR * risk, _Digits);
+   double sl = PositionGetDouble(POSITION_SL), tp = PositionGetDouble(POSITION_TP);
+   if(sl > 0 && (want - sl) * side < _Point / 2) return;          // only ever tightens
+   if(MathAbs(want - g_trailRefused) < _Point / 2) return;        // refused for good at this level
+   if(WaitingForQuote()) return;
+   double px = side == 1 ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   if(px > 0 && (px - want) * side <= 0) { ClosePosition(ticket, "EXIT_TRAIL"); return; }
+   if(trade.PositionModify(ticket, want, tp) && trade.ResultRetcode() == TRADE_RETCODE_DONE)
+     {
+      GVSet("trailed", 1);
+      GlobalVariablesFlush();
+      g_trailErr = 0;
+      Journal("TRAIL", "stop moved from " + DoubleToString(sl, _Digits) + " to " + DoubleToString(want, _Digits) + ": " +
+              DoubleToString(InpTrailDistR, 1) + " x the strategy stop behind the best price " + DoubleToString(best, _Digits));
+      return;
+     }
+   uint rc = trade.ResultRetcode();
+   NoteRefusal(rc);
+   if(!Transient(rc)) g_trailRefused = want;
+   if(g_trailErr != rc)
+     {
+      g_trailErr = rc;
+      Journal("ERROR", "stop move to " + DoubleToString(want, _Digits) + " failed, retcode " + IntegerToString((int)rc) +
+              " (" + trade.ResultRetcodeDescription() + ")" + (Transient(rc) ? "; will retry" : "; it stays at " + DoubleToString(sl, _Digits)));
+     }
+  }
+
 //--- the bar-by-bar decision -------------------------------------------
 void Run()
   {
@@ -404,6 +503,8 @@ void Run()
    ulong ticket = 0; int side = 0; double openPrice = 0;
    bool has = FindPosition(ticket, side, openPrice);
 
+   string stopWhy = DrawdownStop(InpMaxDrawdownPct);              // sets DG_KILL when the account is too far below its peak
+   if(stopWhy != "") Journal("KILL_SWITCH", stopWhy);
    // Kill switch: set global variable DG_KILL = 1 (F3 in MT5) to close and stop.
    if(GlobalVariableCheck("DG_KILL") && GlobalVariableGet("DG_KILL") == 1)
      {
@@ -414,6 +515,7 @@ void Run()
    int pendingExit = (int)GVGet("exit_pending", 0);
    if(has && pendingExit > 0) { ClosePosition(ticket, ExitName(pendingExit)); return; }
    if(!has && GVGet("side", 0) != 0 && !ReportOutsideClose(pendingExit)) return;
+   if(has) FixTarget(ticket, openPrice);
    if(HistorySettling()) return;                                  // everything above needs no bars, so it never waits
 
    datetime closed = iTime(_Symbol, InpTimeframe, 1);             // newest CLOSED bar
@@ -443,7 +545,11 @@ void Run()
       Journal("WAIT", "first start: acting from the next closed bar, not the " + TimeToString(closed, TIME_DATE | TIME_MINUTES));
       return;
      }
-   if((datetime)GVGet("lastbar", 0) == closed) return;
+   if((datetime)GVGet("lastbar", 0) == closed)
+     {
+      if(has) TrailStop(ticket, side, openPrice);                  // only once its newest bar is decided
+      return;
+     }
 
    MqlRates r[];
    ArraySetAsSeries(r, false);                                    // oldest first, like the JS arrays
@@ -484,9 +590,13 @@ void Run()
            }
          if(stop == 0)
            {
-            // The broker stop sits InpHardStopAtr ATRs out and the strategy stop InpStopAtr: scale it back.
+            // The broker stop sits InpHardStopAtr ATRs out and the strategy stop InpStopAtr: scale it back. With the
+            // trailing stop on, the broker stop may have moved, so the signal bar's ATR is used instead.
             double sl = PositionGetDouble(POSITION_SL);
-            stop = sl > 0 ? openPrice - (openPrice - sl) * InpStopAtr / InpHardStopAtr : openPrice - side * InpStopAtr * atr;
+            int j = -1;
+            for(int i = 0; i < n; i++) if(r[i].time <= sig) j = i;   // the signal bar
+            if(InpTrailAtR > 0 && j > InpAtrPeriod) stop = openPrice - side * InpStopAtr * AtrLast(r, j + 1, InpAtrPeriod);
+            else stop = sl > 0 ? openPrice - (openPrice - sl) * InpStopAtr / InpHardStopAtr : openPrice - side * InpStopAtr * atr;
             GVSet("stop", stop);
             Journal("WARN", "strategy stop was missing, rebuilt at " + DoubleToString(stop, _Digits));
            }
@@ -502,6 +612,7 @@ void Run()
       Journal("BAR", bar + " | " + (side == 1 ? "LONG" : "SHORT") + " bars " + IntegerToString(bars) +
               " stop " + DoubleToString(stop, _Digits) + (why == "" ? " | hold" : " | " + why));
       if(why != "") ClosePosition(ticket, why);
+      else TrailStop(ticket, side, openPrice);
       return;
      }
 
@@ -532,9 +643,9 @@ int OnInit()
      }
    if(InpFixedLots != 0 && InpFixedLots < 0.01)
       return INIT_PARAMETERS_INCORRECT;                            // a fixed size is never below 0.01 lots
-   if(InpTpR < 0) return INIT_PARAMETERS_INCORRECT;
+   if(InpTpR < 0 || InpMaxStopUsd < 0 || InpTrailAtR < 0 || (InpTrailAtR > 0 && InpTrailDistR <= 0)) return INIT_PARAMETERS_INCORRECT;
    if(InpBreakout < 2 || InpExit < 1 || InpEmaPeriod < 2 || InpAtrPeriod < 1 ||
-      InpCalcBars < InpEmaPeriod + InpBreakout + 10 || InpRiskPct <= 0 || InpRiskPct > 2 || InpStopAtr <= 0)
+      InpCalcBars < InpEmaPeriod + InpBreakout + 10 || InpRiskPct <= 0 || InpRiskPct > 2 || InpStopAtr <= 0 || InpMaxDrawdownPct < 0 || InpMaxDrawdownPct > 50)
       return INIT_PARAMETERS_INCORRECT;                            // risk above 2% is refused outright
    trade.SetExpertMagicNumber(InpMagic);
    trade.SetDeviationInPoints(InpDeviationPts);
@@ -546,7 +657,10 @@ int OnInit()
    g_settleFrom = g_lastRun = TimeLocal();                          // MT5 may still be catching up on bars
    EventSetTimer(30);
    Journal("START", _Symbol + " " + EnumToString(InpTimeframe) + ", long " + (InpAllowLong ? "on" : "off") +
-           ", short " + (InpAllowShort ? "on" : "off") + (InpFixedLots > 0 ? ", fixed " + DoubleToString(InpFixedLots, 3) + " lots" : ", risk " + DoubleToString(InpRiskPct, 2) + "%") + ", take-profit " + DoubleToString(InpTpR, 1) + "R" +
+           ", short " + (InpAllowShort ? "on" : "off") + (InpFixedLots > 0 ? ", fixed " + DoubleToString(InpFixedLots, 3) + " lots" : ", risk " + DoubleToString(InpRiskPct, 2) + "%") + ", take-profit " + DoubleToString(InpTpR, 1) + "R from the fill" +
+           (InpMaxStopUsd > 0 ? ", no stop over $" + DoubleToString(InpMaxStopUsd, 0) : "") +
+           (InpTrailAtR > 0 ? ", stop trails " + DoubleToString(InpTrailDistR, 1) + "R behind from +" + DoubleToString(InpTrailAtR, 1) + "R" : "") +
+           (InpMaxDrawdownPct > 0 ? ", account stop " + DoubleToString(InpMaxDrawdownPct, 0) + "% below the peak" : "") +
            ", demo account " + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)));
    return INIT_SUCCEEDED;
   }

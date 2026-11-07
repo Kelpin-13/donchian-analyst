@@ -80,7 +80,7 @@ console.log('strategy        EA  research  identical  exit differs  EA only  res
 
 let sumSame = 0, sumMax = 0;
 const notes = [];
-Object.keys(I.PORTFOLIO).forEach(id => {
+Object.keys(P).forEach(id => {                   // the strategies still trading (retired ones are off in the EA)
   const e = (ea[id] || []).filter(t => t.t >= from && t.exitT <= to);
   const res = I.backtest(bars, P[id], I.COSTS.real).filter(t => t.t >= from && t.exitT <= to);
   const key = t => t.t + '|' + t.side;

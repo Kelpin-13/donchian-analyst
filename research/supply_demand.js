@@ -158,7 +158,7 @@ if (require.main === module) {
 
   // Next to what the EA already trades: the variant with the best DESIGN-half PF, judged on 2025-2026.
   const best = rows.filter(x => x.cname === 'real').sort((x, y) => y.a.pf - x.a.pf)[0];
-  const P = portfolio(m15), port = [].concat(...Object.values(P).map(s => backtest(m15, s, COSTS.real)));
+  const P = portfolio(m15, { retired: true }), port = [].concat(...Object.values(P).map(s => backtest(m15, s, COSTS.real)));
   const daily = tr => { const m = new Map(); tr.forEach(t => m.set(dayOf(t.t), (m.get(dayOf(t.t)) || 0) + t.r)); return m; };
   const dp = daily(port), dz = daily(best.tr), keys = [...new Set([...dp.keys(), ...dz.keys()])];
   const xs = keys.map(k => dp.get(k) || 0), ys = keys.map(k => dz.get(k) || 0);

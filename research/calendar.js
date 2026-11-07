@@ -37,7 +37,7 @@ function loadReleases(file, only) {
   const parseT = s => Date.parse(s.trim().replace(/\./g, '-').replace(' ', 'T') + 'Z');
   const events = fs.readFileSync(file, 'latin1').trim().split(/\r?\n/).slice(1).map(l => {
     const p = l.split(',');
-    return { t: parseT(p[0]), country: p[1], importance: p[3], mode: p[4], name: p[7] };
+    return { t: parseT(p[0]), country: p[1], importance: p[3], mode: p[4], name: p[7], actual: p[8], forecast: p[9] };
   }).filter(e => e.t > 0);
 
   const minuteOf = ms => ((ms % DAY) + DAY) % DAY / MIN;
@@ -52,7 +52,7 @@ function loadReleases(file, only) {
   });
   const onlyRe = only ? new RegExp('^(' + (only === 'top' ? TOP : only) + ')$', 'i') : null;
   const releases = events.filter(e => e.country === 'US' && e.importance === 'high' && e.mode === 'time' && (!onlyRe || onlyRe.test(e.name)))
-    .map(e => ({ t: e.t - shift[usDst(e.t)].min * MIN, name: e.name }))
+    .map(e => ({ t: e.t - shift[usDst(e.t)].min * MIN, name: e.name, actual: e.actual === '' ? null : Number(e.actual), forecast: e.forecast === '' || e.forecast === undefined ? null : Number(e.forecast) }))
     .sort((a, b) => a.t - b.t);
   return { file, events: events.length, shift, onlyRe, releases, times: releases.map(e => e.t) };
 }

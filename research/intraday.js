@@ -92,20 +92,38 @@ function dailyOf(bars) {
  */
 function backtest(bars, S, cost) {
   const trades = [];
-  const slip = px => cost.slipPct ? px * cost.slipPct : cost.slip;
+  // cost.slipFn(t) (research/realism_lab.js, default none): extra dollars on this fill, drawn per fill, so no two runs fill alike.
+  const slip = (px, t) => (cost.slipPct ? px * cost.slipPct : cost.slip) + (cost.slipFn ? cost.slipFn(t) : 0);
   let pos = null, orders = [], pendEntry = null, pendExit = null, D = {}, dayTrades = 0;
+  // S.maxStop (the EAs' InpMaxStopUsd): a trade whose stop would cost more than this at 0.01 lots (1 oz, so dollars =
+  // price distance) is not taken. Measured where the EA measures it, before anything is sent: a resting order from its
+  // level, a market order from its stop distance.
+  const tooWide = dist => S.maxStop > 0 && dist > S.maxStop;
 
   function enter(side, raw, i, spec, viaStop, isLimit) {
-    const fill = isLimit ? raw : raw + side * slip(raw);   // raw is already Ask for a buy, Bid for a sell
+    const planned = spec.level !== undefined && spec.stop !== undefined ? Math.abs(spec.level - spec.stop)
+                  : spec.stopDist !== undefined ? spec.stopDist : Math.abs(raw - spec.stop);
+    if (tooWide(planned)) return;                          // over the cap: the EA never sends it
+    const fill = isLimit ? raw : raw + side * slip(raw, bars[i].t);   // raw is already Ask for a buy, Bid for a sell
     const stop = spec.stop !== undefined ? spec.stop : fill - side * spec.stopDist;
     const risk = (fill - stop) * side;
     if (!(risk > 0)) return;                               // gapped past its own stop: no trade
-    pos = { side, t: bars[i].t, entryBar: i, entry: fill, stop, risk, viaStop, level: spec.level,
+    pos = { side, t: bars[i].t, entryBar: i, entry: fill, stop, firstStop: stop, risk, viaStop, level: spec.level,
             target: spec.targetR ? fill + side * spec.targetR * risk : null, targetR: spec.targetR, reverse: spec.reverse };
     dayTrades++;
   }
+  // S.trail { at, dist, lock } in R (default off): once the best price since the fill (Bid high for a long, Ask low for
+  // a short) is `at` x the risk in profit, the stop follows `dist` x the risk behind it (lock: moves to the fill once).
+  // Moved at the bar's close, so the new stop counts from the next bar, as an EA moving it at each new M15 bar would.
+  function trailStop(p, k) {
+    const best = p.side === 1 ? k.h : k.l + k.sp;
+    p.best = p.best === undefined ? best : p.side === 1 ? Math.max(p.best, best) : Math.min(p.best, best);
+    if ((p.best - p.entry) * p.side < S.trail.at * p.risk) return;
+    const s = S.trail.lock ? p.entry : p.best - p.side * S.trail.dist * p.risk;
+    if ((s - p.stop) * p.side > 0) p.stop = s;
+  }
   function exit(i, raw, why, isLimit) {
-    const fill = isLimit ? raw : raw - pos.side * slip(raw);
+    const fill = isLimit ? raw : raw - pos.side * slip(raw, bars[i].t);
     trades.push({ t: pos.t, exitT: bars[i].t, side: pos.side, r: (fill - pos.entry) * pos.side / pos.risk, why, entry: pos.entry, risk: pos.risk });
     pos = null;
   }
@@ -128,8 +146,9 @@ function backtest(bars, S, cost) {
 
     orders = orders.filter(o => m < o.until);
     if (!pos && orders.length && dayTrades < S.maxPerDay) {
-      const hit = orders.filter(o => o.limit ? (o.side === 1 ? k.l + k.sp <= o.level : k.h >= o.level)
-                                             : (o.side === 1 ? k.h + k.sp >= o.level : k.l <= o.level));
+      const hit = orders.filter(o => !tooWide(Math.abs(o.level - o.stop)) &&       // over the cap it never rests at the broker
+                                     (o.limit ? (o.side === 1 ? k.l + k.sp <= o.level : k.h >= o.level)
+                                              : (o.side === 1 ? k.h + k.sp >= o.level : k.l <= o.level)));
       if (hit.length) {
         // Both sides in one bar: take the one nearer the open; the stop check below then assumes the worst.
         const o = hit.sort((a, b) => Math.abs(a.level - k.o) - Math.abs(b.level - k.o))[0];
@@ -144,14 +163,16 @@ function backtest(bars, S, cost) {
       const p = pos, fresh = p.entryBar === i;
       if (p.side === 1 ? k.l <= p.stop : k.h + k.sp >= p.stop) {
         const px = fresh ? p.stop : p.side === 1 ? Math.min(k.o, p.stop) : Math.max(k.o + k.sp, p.stop);
-        exit(i, px, 'STOP');
-        if (p.reverse && dayTrades < S.maxPerDay && m < (S.entryUntil || S.flatMin))
+        const trailed = p.stop !== p.firstStop;
+        exit(i, px, trailed ? 'TRAIL' : 'STOP');
+        if (p.reverse && !trailed && dayTrades < S.maxPerDay && m < (S.entryUntil || S.flatMin))
           enter(-p.side, px, i, { stop: p.level, level: p.stop, reverse: true, targetR: p.targetR }, true);
       } else if (p.target !== null && !(fresh && p.viaStop) &&
                  (p.side === 1 ? k.h >= p.target : k.l + k.sp <= p.target)) {
         exit(i, fresh ? p.target : p.side === 1 ? Math.max(k.o, p.target) : Math.min(k.o + k.sp, p.target), 'TARGET', true);
       }
     }
+    if (pos && S.trail) trailStop(pos, k);
 
     const lastOfDay = i + 1 === bars.length || dayOf(bars[i + 1].t) !== dayOf(k.t);
     if (lastOfDay) { if (pos) exit(i, pos.side === 1 ? k.c : k.c + k.sp, 'SESSION'); continue; }
@@ -476,12 +497,23 @@ const PORTFOLIO = {
   MOM_16: 'Intraday momentum: day open -> 16:00 direction, held to session end + H4 trend',
   MOM_20: 'Intraday momentum: day open -> 20:00 direction, held to session end + H4 trend'
 };
-function portfolio(bars) {
+/**
+ * The EAs' InpMaxStopUsd (owner decision, 4 Nov 2026): no trade whose stop would cost more than $150 at 0.01 lots.
+ * Measured in research/tp_lab.js before it was built: 40 of 2,690 trades in 2023-2026, 38 of them Dual Thrust.
+ */
+const MAX_STOP = 150;
+
+/** Retired by the owner on 6 Nov 2026 (GoldIntraday 1.16 has them off): both lost money with fills $0.50 a side worse (research/stress_lab.js). */
+const RETIRED = ['NY_ORB', 'MOM_20'];
+/** opts.maxStop: the stop cap, MAX_STOP unless given (0 = none, as the studies made before it).
+ *  opts.retired: true to include the retired strategies (the studies made before 6 Nov 2026 use all six). */
+function portfolio(bars, opts) {
+  const maxStop = opts && opts.maxStop !== undefined ? opts.maxStop : MAX_STOP, retired = !!(opts && opts.retired);
   const trend = h4Trend(bars), S0 = strategies(bars);
   const all = S0.concat(S0.filter(s => s.family !== 'mean reversion').map(s => withTrend(s, trend)));
   const out = {};
-  Object.keys(PORTFOLIO).forEach(id => { out[id] = withTarget(all.find(s => s.name === PORTFOLIO[id]), TARGETS[id]); });
+  Object.keys(PORTFOLIO).filter(id => retired || !RETIRED.includes(id)).forEach(id => { out[id] = Object.assign(withTarget(all.find(s => s.name === PORTFOLIO[id]), TARGETS[id]), { maxStop }); });
   return out;
 }
 
-module.exports = { backtest, strategies, h4Trend, withTrend, withTarget, portfolio, PORTFOLIO, TARGETS, stats, threeWeeks, ema, rsi, atr, bollinger, dailyOf, COSTS, SPLIT };
+module.exports = { backtest, strategies, h4Trend, withTrend, withTarget, portfolio, PORTFOLIO, RETIRED, TARGETS, MAX_STOP, stats, threeWeeks, ema, rsi, atr, bollinger, dailyOf, COSTS, SPLIT };

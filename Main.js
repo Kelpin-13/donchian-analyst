@@ -10,8 +10,8 @@
 function setup() {
   ensureSheets_();
 
-  // Clear any old triggers from this project first (the morning map's timer stays: Morning.gs owns it).
-  ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() !== 'runMorningMap').forEach(t => ScriptApp.deleteTrigger(t));
+  // Clear any old triggers from this project first (the morning map's and the watchdog's timers stay: their files own them).
+  ScriptApp.getProjectTriggers().filter(t => !['runMorningMap', 'runWatchdog'].includes(t.getHandlerFunction())).forEach(t => ScriptApp.deleteTrigger(t));
 
   // Monitor: every 15 min. ~96 runs/day at ~3s each = ~5 min of the 90 min quota.
   ScriptApp.newTrigger('runMonitor').timeBased().everyMinutes(15).create();
@@ -57,7 +57,7 @@ function setup() {
  * Undo: Trading Agent → Turn the old system back on.
  */
 function oldSystemOff() {
-  const triggers = ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() !== 'runMorningMap');   // not the old system
+  const triggers = ScriptApp.getProjectTriggers().filter(t => !['runMorningMap', 'runWatchdog'].includes(t.getHandlerFunction()));   // not the old system
   triggers.forEach(t => ScriptApp.deleteTrigger(t));
   PropertiesService.getScriptProperties().setProperty('OLD_SYSTEM_OFF', String(Date.now()));
   const lock = LockService.getScriptLock();
@@ -463,6 +463,7 @@ function installChecks_(skipApi) {
                                        : ' not heard from yet')).join(', ');
   });
   check('Morning.gs', () => need(typeof runMorningMap === 'function' && typeof telegramChatId_ === 'function', 'Morning.gs (and Config.gs)'));
+  check('Watchdog.gs', () => need(typeof runWatchdog === 'function' && typeof watchdogCheck_ === 'function' && /watchdogEnsure_/.test(String(runMorningMap)), 'Watchdog.gs (and Morning.gs)'));
   check('History.gs is current', () => need(typeof updateHistory === 'function', 'History.gs'));
   check('Config.gs is current', () => need(CONFIG.BACKTEST.minTrades !== undefined && CONFIG.LAB !== undefined, 'Config.gs'));
   check('DashboardPage.html', () => { HtmlService.createTemplateFromFile('DashboardPage'); });

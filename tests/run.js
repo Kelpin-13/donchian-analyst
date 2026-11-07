@@ -316,12 +316,14 @@ ok(post(Object.assign({}, base, { ea: 'DonchianGold', lines: [], equity: 10400 }
 const stratRows = rowsOf(M, 'MT5 Strategies');
 const glanceRow = name => stratRows.filter(r => r && r[0] === name)[0] || [];
 const cards = stratRows.filter(r => r && /^  \d+   /.test(String(r[0]))).length;
-ok(glanceRow('New York opening range')[2] === '22:00–01:00' && glanceRow('Momentum at 16:00')[2] === '21:00',
-   'strategy times shown in the owner\'s clock (broker 17:00-20:00 → 22:00–01:00 at UTC+8)');
-ok(cards === 7 && stratRows.some(r => r && /closed by 04:00 \(broker 23:00\)/.test(String(r[1]))), 'one card per strategy (7), with both clocks in the details');
+ok(glanceRow('Momentum at 16:00')[2] === '21:00' && !glanceRow('New York opening range').length && !glanceRow('Momentum at 20:00').length,
+   'strategy times shown in the owner\'s clock (broker 16:00 → 21:00 at UTC+8); the retired NY ORB and momentum at 20:00 are not listed');
+ok(sumRow('New York opening range (retired 6 Nov 2026)')[1] === 1 && sumRow('New York opening range (retired 6 Nov 2026)')[8] === '',
+   'the summary keeps a retired strategy\'s past trades, labelled, with no trades expected');
+ok(cards === 5 && stratRows.some(r => r && /closed by 04:00 \(broker 23:00\)/.test(String(r[1]))), 'one card per strategy still trading (5), with both clocks in the details');
 ok(M.run('MT5_STRATEGIES').every(st => st.name && st.idea && st.entry && st.stop && st.exit && st.trades > 0 && st.eras.length === 3),
    'every strategy is fully described, with its 18-year record in three eras');
-ok(glanceRow('New York opening range')[4] === '$20' && glanceRow('Dual Thrust')[4] === '$126' && glanceRow('Dual Thrust')[6] === 93 && glanceRow('Dual Thrust')[7] === '3 of 3',
+ok(glanceRow('Dual Thrust')[4] === '$126' && glanceRow('Dual Thrust')[6] === 93 && glanceRow('Dual Thrust')[7] === '3 of 3',
    'at a glance: what each stop usually costs at the fixed size, 18-year result and eras positive');
 const FX = world({ markets: MARKETS, props: { MT5_KEY: 'mk' } });
 FX.run('doPost(' + JSON.stringify({ postData: { contents: JSON.stringify(Object.assign({}, base, { ea: 'GoldIntraday', lines: [
@@ -750,8 +752,8 @@ G3.b.refuseWith = RETCODES.TRADE_RETCODE_REQUOTE;
 ok(G3.ea.Enter(5, -1, 0, 20, 'x') && G3.ea.Enter(5, -1, 0, 20, 'x') && G3.b.sends.length === 2, 'a requote is still resent straight away');
 
 // The rule only works if nothing goes around it.
-const SENDS = /\btrade\.(Buy|Sell|BuyStop|SellStop|PositionClose|OrderDelete)\(/;
-[['DonchianGold.mq5', ['ClosePosition', 'OpenPosition']], ['GoldIntraday.mq5', ['CancelOrder', 'CloseStrat', 'Enter', 'PlaceStop']]].forEach(([file, gated]) => {
+const SENDS = /\btrade\.(Buy|Sell|BuyStop|SellStop|PositionClose|PositionModify|OrderDelete)\(/;
+[['DonchianGold.mq5', ['ClosePosition', 'FixTarget', 'OpenPosition', 'TrailStop']], ['GoldIntraday.mq5', ['CancelOrder', 'CloseStrat', 'Enter', 'FixTargets', 'PlaceStop']]].forEach(([file, gated]) => {
   const fns = functionsOf(readMt5(file));
   ok(JSON.stringify(Object.keys(fns).filter(n => SENDS.test(fns[n].body)).sort()) === JSON.stringify(gated), file + ': only ' + gated.join(', ') + ' send orders');
   ok(gated.every(n => { const s = fns[n].body, at = s.search(SENDS); return s.indexOf('WaitingForQuote()') >= 0 && s.indexOf('WaitingForQuote()') < at && s.indexOf('NoteRefusal(', at) > at; }),
@@ -784,7 +786,7 @@ function giRun(now, seed) {
   Object.assign(b.env, {
     NS: 7, g_day: { day: -1, ok: false, dtOk: false },
     DayOf: t => Math.floor(t / 86400), MinOfDay: t => Math.floor((t % 86400) / 60), Px: p => (+p).toFixed(3),
-    CountTrades: call('CountTrades'), Reconcile: call('Reconcile'), TrackFills: call('TrackFills'), StandDown: call('StandDown'),
+    CountTrades: call('CountTrades'), Reconcile: call('Reconcile'), TrackFills: call('TrackFills'), FixTargets: call('FixTargets'), StandDown: call('StandDown'),
     Decide: call('Decide'), Arm: call('Arm'), SendQueued: call('SendQueued'), SyncOrders: call('SyncOrders'),
     FlatMinute: () => 23 * 60,
     HasPos: k => k in b.held, FindPos: k => k in b.held, openedAt: k => b.held[k],
@@ -897,6 +899,328 @@ ok(giDay(GiW) && GiW.calls.includes('Decide'), 'live over a weekend: Monday\'s f
   ok(/^\s*if\(MQLInfoInteger\(MQL_TESTER\)\) return false;/m.test(fns.HistorySettling.body), file + ': the first thing the wait does is rule out the tester');
   ok(/g_settleFrom = g_lastRun = TimeLocal\(\);/.test(fns.OnInit.body), file + ': OnInit starts the minute');
 });
+
+section('MT5 $150 stop cap and the take-profit from the fill');
+// Owner decisions of 4 Nov 2026: no trade whose stop would cost over $150 at its size; every take-profit exactly its
+// strategy's multiple of the risk from the real fill (on 3 Nov a $1.09 slip turned New York's 1:4 into 1:3.3).
+const I = require('../research/intraday.js'), DTR = require('../research/daytrade.js');
+const capIn = (src, name) => +(new RegExp('input double ' + name + '\\s*=\\s*([\\d.]+)').exec(src) || [])[1];
+ok(I.MAX_STOP === 150 && capIn(readMt5('GoldIntraday.mq5'), 'InpMaxStopUsd') === I.MAX_STOP && capIn(readMt5('DonchianGold.mq5'), 'InpMaxStopUsd') === I.MAX_STOP &&
+   /maxStop: 150,/.test(fs.readFileSync(path.join(__dirname, '..', 'research', 'parity_mt5.js'), 'utf8')),
+   'both EAs\' cap inputs match the research and the H4 parity check: $150');
+// Research, intraday engine: a rising Monday on M15.
+const capDay = Date.UTC(2026, 10, 2), capM15 = [];
+for (let i = 4; i < 92; i++) { const px = 2000 + (i - 4) * 2; capM15.push({ t: capDay + i * 900000, o: px, h: px + 1, l: px - 1, c: px + 0.5, sp: 0.3 }); }
+const capRun = (S, cap) => I.backtest(capM15, Object.assign({ name: 'test', flatMin: 23 * 60, maxPerDay: 1 }, S, { maxStop: cap }), I.COSTS.real);
+const restingS = dist => ({ onDay: () => ({ orders: [{ side: 1, level: 2050, stop: 2050 - dist, targetR: 2, until: 22 * 60 }] }) });
+const marketS = dist => ({ onClose: (i, pos) => (!pos && i === 10 ? { enter: { side: 1, stopDist: dist, targetR: 1.5 } } : null) });
+ok(capRun(restingS(149), 150).length === 1 && capRun(restingS(151), 150).length === 0 && capRun(restingS(151), 0).length === 1,
+   'research: a resting order whose stop would cost over $150 at 0.01 lots never fills; a cap of 0 is none');
+ok(capRun(marketS(149), 150).length === 1 && capRun(marketS(151), 150).length === 0 && capRun(marketS(151), undefined).length === 1,
+   'research: so is a market entry, measured from its stop distance; a strategy without the cap trades as before');
+// Research, H4 engine: a quiet range, then one bar closes above it; the stop is 2 x ATR, so the range sets its cost.
+const capH4 = range => {
+  const bars = [], t0 = Date.UTC(2026, 0, 5);
+  for (let i = 0; i < 260; i++) bars.push({ t: t0 + i * 14400000, o: 3000, h: 3000 + range / 2, l: 3000 - range / 2, c: 3000, sp: 0.3, v: 1 });
+  bars.push({ t: t0 + 260 * 14400000, o: 3000, h: 3000 + range * 1.2, l: 2995, c: 3000 + range, sp: 0.3, v: 1 });
+  for (let i = 261; i < 300; i++) bars.push({ t: t0 + i * 14400000, o: 3000 + range, h: 3000 + range * 1.1, l: 3000 + range * 0.9, c: 3000 + range, sp: 0.3, v: 1 });
+  return bars;
+};
+const capCfg = cap => ({ dir: 'both', N: 20, M: 10, k: 2, ema: 100, maxBars: 60, barMin: 240, flat: false, swapLong: -5.92, swapShort: 3.67, hardK: 4,
+  targetR: 1.5, targetWait: true, maxStop: cap, firstEntryMin: 0, lastEntryMin: 24 * 60, flatMin: Infinity, from: -Infinity,
+  to: Date.UTC(2026, 0, 5) + 299 * 14400000 });                  // the last bar closes what is still open, so it counts
+const h4Narrow = DTR.simulate(capH4(60), capCfg(150)), h4Wide = DTR.simulate(capH4(80), capCfg(150)), h4Off = DTR.simulate(capH4(80), capCfg(0));
+ok(h4Narrow.length === 1 && h4Narrow[0].risk < 150 && h4Wide.length === 0 && h4Off.length === 1 && h4Off[0].risk > 150,
+   'research: the H4 breakout with a $' + (h4Off[0] ? h4Off[0].risk.toFixed(0) : '?') + ' stop is dropped under the cap and taken without it');
+ok(/target: cfg\.targetR \? fill \+ side \* cfg\.targetR \* sig\.stopDist/.test(fs.readFileSync(path.join(__dirname, '..', 'research', 'daytrade.js'), 'utf8')) &&
+   /target: spec\.targetR \? fill \+ side \* spec\.targetR \* risk/.test(fs.readFileSync(path.join(__dirname, '..', 'research', 'intraday.js'), 'utf8')),
+   'research: both engines measure the take-profit from the fill, which is what the EAs now match');
+
+// GoldIntraday: its real LotsFor, PlaceStop, Enter and FixTargets on the fake broker.
+const giCap = () => {
+  const b = fakeBroker({ magic: 20261014, open: goldOpen });
+  b.tick(srv(11, 3, 17, 0), 3942.5);
+  const env = Object.assign(b.env, { NS: 7, FindPos: k => !!b.position && b.position.magic === 20261013 + k, HasPos: () => !!b.position, FindOrder: () => 0,
+    EntryAllowed: () => true, DayOf: t => Math.floor(t / 86400), Magic: k => 20261013 + k, Px: p => (+p).toFixed(3), Hm: m => String(m), lotsWhy: { v: '' } });
+  // LotsFor hands its reason back by reference, which JS can't: the patches carry it through env.lotsWhy.
+  const ea = loadEa('GoldIntraday.mq5', { env, lift: ['IsDemo', 'Transient', 'LastQuoteMs', 'WaitingForQuote', 'NoteRefusal', 'JournalFailure', 'Enter', 'PlaceStop',
+    'LotsFor', 'FixTargets', 'TpPrice', 'RiskText', 'Weight', 'Remember', 'GVSet', 'GVGet', 'GVDel'], patches: [
+    ['{ reason = "its stop would cost $"', '{ reason = lotsWhy.v = "its stop would cost $"'],
+    ['Journal(k, "SKIP", reason + " (stop "', 'Journal(k, "SKIP", (reason || lotsWhy.v) + " (stop "'],
+    ['if(reason == "symbol data not ready") return true; Journal(k, "SKIP", reason);', 'if(reason == "symbol data not ready") return true; Journal(k, "SKIP", reason || lotsWhy.v);']] });
+  return { b, ea };
+};
+const Cap = giCap();
+ok(Cap.ea.LotsFor(3, 150, 4000, '') === 0.003 && Cap.ea.LotsFor(3, 150.004, 4000, '') === 0.003 && Cap.ea.LotsFor(3, 150.01, 4000, '') === 0,
+   'GoldIntraday: a stop costing exactly $150.00 at 0.01 lots is traded (at 0.5% of $10,000: 0.003 lots); $150.01 is not');
+ok(Cap.ea.LotsFor(3, 25, 4000, '') === 0.02 && Cap.ea.LotsFor(3, 40, 4000, '') === 0.012,
+   'GoldIntraday sizes by 0.5% of equity: a $25 stop gets 0.02 lots ($50), a $40 stop 0.012 lots ($48), rounded down to the 0.001 step');
+Cap.ea.set('InpFixedLots', 0.01);
+ok(Cap.ea.LotsFor(3, 150, 4000, '') === 0.01 && Cap.ea.LotsFor(3, 150.01, 4000, '') === 0, 'at a fixed 0.01 lots the same cap applies');
+Cap.ea.set('InpFixedLots', 0);
+ok(Cap.ea.PlaceStop(3, 0, { level: 4100, sl: 3900, until: 1200 }) === 1 && Cap.ea.PlaceStop(3, 1, { level: 3900, sl: 4100, until: 1200 }) === 1 && Cap.b.sends.length === 0,
+   'a Dual Thrust day with a $200 range: neither stop order is sent');
+const capSkips = rowsNamed(Cap.b, 'SKIP');
+ok(capSkips.length === 1 && capSkips[0].detail === 'its stop would cost $200.00 at 0.01 lots, over the $150 cap (stop 200.000 away)', 'one SKIP row a day says why: ' + (capSkips[0] || {}).detail);
+ok(Cap.ea.Enter(4, -1, 0, 160, 'breakdown') === false && Cap.b.sends.length === 0 && rowsNamed(Cap.b, 'SKIP')[1].detail === 'its stop would cost $160.00 at 0.01 lots, over the $150 cap' &&
+   Cap.ea.Enter(4, -1, 0, 36, 'breakdown') === false && Cap.b.sends.length === 1 && rowsNamed(Cap.b, 'ENTRY_SHORT').length === 1,
+   'a market entry over the cap is skipped too; one under it goes');
+Cap.ea.set('InpMaxStopUsd', 0);
+ok(Cap.ea.LotsFor(3, 400, 4000, '') === 0.001, 'a cap of 0 turns it off');
+
+// The 3 Nov New York trade: a sell stop at 3942.150, filled $1.085 lower; its take-profit was set from the level.
+const ny = () => ({ ticket: 44516201, dir: -1, lots: 0.01, sl: 3949.17, tp: 3914.07, price: 3941.065, time: srv(11, 3, 17, 0, 1), magic: 20261014 });
+const Fx = giCap();
+Fx.b.position = ny();
+Fx.ea.FixTargets();
+const fxMove = Fx.b.sends[0], fxRow = rowsNamed(Fx.b, 'TARGET')[0];
+ok(Fx.b.sends.length === 1 && fxMove.kind === 'modify' && fxMove.tp === 3908.645 && fxMove.sl === 3949.17 && Fx.b.position.tp === 3908.645,
+   'GoldIntraday: the filled position\'s take-profit moves to exactly 4 x the risk from the fill (3908.645, was 3914.070); the stop stays');
+ok(fxRow && fxRow.detail === 'take-profit moved from 3914.070 to 3908.645: 4.00 x the risk from the fill at 3941.065', 'one TARGET row says so: ' + (fxRow || {}).detail);
+for (let i = 0; i < 20; i++) Fx.ea.FixTargets();
+ok(Fx.b.sends.length === 1, 'and it is not sent again');
+const Ex = giCap();
+Ex.b.position = Object.assign(ny(), { price: 3942.15 });
+Ex.ea.FixTargets(); Ex.ea.FixTargets();
+ok(Ex.b.sends.length === 0 && !rowsNamed(Ex.b, 'TARGET').length, 'filled right at its level: already exact, nothing sent');
+const Rf = giCap();
+Rf.b.position = ny();
+Rf.b.refuseWith = 10016;                                          // invalid stops: the price is already past it
+for (let i = 0; i < 5; i++) Rf.ea.FixTargets();
+ok(Rf.b.sends.length === 1 && rowsNamed(Rf.b, 'ERROR').length === 1 && /failed, retcode 10016 .*; it stays at 3914\.070$/.test(rowsNamed(Rf.b, 'ERROR')[0].detail) && Rf.b.position.tp === 3914.07,
+   'refused for good: one try, one ERROR row, and the order\'s own take-profit stays');
+const Mc = giCap();
+Mc.b.position = ny();
+Mc.b.clock = srv(11, 4, 0, 30);                                   // gold's daily break: orders are refused as "market closed"
+for (let i = 0; i < 5; i++) Mc.ea.FixTargets();
+const mcClosed = Mc.b.sends.length;
+Mc.b.tick(srv(11, 4, 1, 6), 3930);
+Mc.ea.FixTargets();
+ok(mcClosed === 1 && Mc.b.sends.length === 2 && Mc.b.position.tp === 3908.645, '"market closed": not resent until a new quote, then it goes');
+const Nt = giCap();
+Nt.b.position = Object.assign(ny(), { magic: 20261019, sl: 3972.313, tp: 3873.243, price: 3932.685 });   // 3 Nov Momentum at 20:00: filled at its price
+Nt.ea.FixTargets();
+ok(Nt.b.sends.length === 0, 'a market entry filled at the price it was sent at is left alone');
+
+// DonchianGold: a short like 2 Nov's (strategy stop 64.068 above the fill), then the same filled 49.5 cents from its quote.
+const dgFix = (fill, tp) => {
+  const D = dgAttach(FRI_LAST, b => {
+    b.position = { ticket: 44417258, dir: -1, lots: 0.01, sl: 4002.63, tp, price: fill, time: FRI_BAR, magic: 20261009 };
+    b.gv.set(DG_GV + 'side', -1); b.gv.set(DG_GV + 'posid', 44417258); b.gv.set(DG_GV + 'stop', fill + 64.068);
+  });
+  D.b.tick(FRI_LAST + 1, 3896.6);
+  return D;
+};
+const Df = dgFix(3874.495, 3778.393);
+for (let i = 0; i < 5; i++) Df.ea.FixTarget(44417258, 3874.495);
+ok(Df.b.sends.length === 0, 'DonchianGold: filled at its quote, the take-profit is already 1.5 x the strategy stop: nothing sent');
+const Ds = dgFix(3874.0, 3778.393);
+for (let i = 0; i < 5; i++) Ds.ea.FixTarget(44417258, 3874.0);
+ok(Ds.b.sends.length === 1 && Ds.b.sends[0].kind === 'modify' && Ds.b.sends[0].tp === 3777.898 && Ds.b.sends[0].sl === 4002.63 &&
+   (rowsNamed(Ds.b, 'TARGET')[0] || {}).detail === 'take-profit moved from 3778.393 to 3777.898: 1.5 x the strategy stop from the fill at 3874.000',
+   'filled away from its quote: the take-profit moves once to 1.5 x the strategy stop from the fill, the broker stop stays');
+const Dr = dgFix(3874.0, 3778.393);
+Dr.b.refuseWith = 10016;
+for (let i = 0; i < 5; i++) Dr.ea.FixTarget(44417258, 3874.0);
+ok(Dr.b.sends.length === 1 && rowsNamed(Dr.b, 'ERROR').length === 1, 'refused for good: tried once, journaled once');
+const giRunBody = functionsOf(readMt5('GoldIntraday.mq5')).Run.body;
+ok(giRunBody.indexOf('FixTargets();') > giRunBody.indexOf('m >= flat) { StandDown') && giRunBody.indexOf('FixTargets();') < giRunBody.indexOf('HistorySettling()') &&
+   count(Gi0, 'FixTargets') === count(Gi0, 'Reconcile') && count(Gi0, 'FixTargets') === 3 && !Gi5.calls.includes('FixTargets'),
+   'GoldIntraday: Run fixes take-profits on every tick, even in the minute after a start, and not once it is flat for the day');
+ok(dgFns.Run.body.indexOf('FixTarget(ticket, openPrice)') > dgFns.Run.body.indexOf('ReportOutsideClose') &&
+   dgFns.Run.body.indexOf('FixTarget(ticket, openPrice)') < dgFns.Run.body.indexOf('HistorySettling()'),
+   'DonchianGold: Run fixes the take-profit after what closes a position and before the history wait');
+const DgCap = dgAttach(FRI_LAST);
+DgCap.b.tick(FRI_LAST + 1, 3896.6);
+ok(DgCap.ea.OpenPosition(-1, 80, FRI_BAR - 14400) === false && DgCap.b.sends.length === 0 &&
+   /^short entry: its stop would cost \$160\.00 at 0\.01 lots, over the \$150 cap$/.test((rowsNamed(DgCap.b, 'SKIP')[0] || {}).detail),
+   'DonchianGold: a breakout whose 2 x ATR stop would cost $160 is skipped with a SKIP row');
+ok(DgCap.ea.OpenPosition(-1, 70, FRI_BAR - 14400) === false && DgCap.b.sends.length === 1 && rowsNamed(DgCap.b, 'ENTRY_SHORT').length === 1,
+   'and one costing $140 goes');
+
+section('MT5 account stop (15% below the peak)');
+{
+  const A = fakeBroker({ magic: 20261009, open: () => true });
+  const stop = A.env.DrawdownStop;
+  A.equity = 10000;
+  ok(stop(15) === '' && A.gv.get('DG_PEAK') === 10000, 'the first look records the peak');
+  A.equity = 10600; stop(15);
+  A.equity = 9011; const a1 = stop(15);
+  ok(a1 === '' && A.gv.get('DG_PEAK') === 10600 && !A.gv.has('DG_KILL'), 'a new high raises the peak; 14.99% below it is still inside the limit');
+  A.equity = 9009; const a2 = stop(15);
+  ok(A.gv.get('DG_KILL') === 1 && /^account stop: equity 9009\.00 is 15\.0% below its peak of 10600\.00 \(limit 15\.0%\)/.test(a2) && A.onDisk && A.onDisk.get('DG_KILL') === 1,
+     'over 15% below the peak: DG_KILL is set and saved to disk at once');
+  ok(stop(15) === '' && stop(15) === '', 'once stopped it says so only once');
+  A.gv.set('DG_KILL', 0); A.equity = 9009;
+  ok(stop(15) !== '' && A.gv.get('DG_KILL') === 1, 'switched back on while still too far down: it stops again');
+  A.gv.delete('DG_KILL'); A.gv.delete('DG_PEAK'); A.equity = 9009;
+  ok(stop(15) === '' && A.gv.get('DG_PEAK') === 9009, 'with DG_PEAK deleted it counts from today\'s equity');
+  A.equity = 0;
+  ok(stop(15) === '' && stop(0) === '', 'no account data yet (equity 0), or a limit of 0: nothing happens');
+  const dgRun = functionsOf(readMt5('DonchianGold.mq5')).Run.body, giRun = functionsOf(readMt5('GoldIntraday.mq5')).Run.body;
+  ok(dgRun.indexOf('DrawdownStop(InpMaxDrawdownPct)') > 0 && dgRun.indexOf('DrawdownStop(InpMaxDrawdownPct)') < dgRun.indexOf('GlobalVariableGet("DG_KILL")') &&
+     giRun.indexOf('DrawdownStop(InpMaxDrawdownPct)') > 0 && giRun.indexOf('DrawdownStop(InpMaxDrawdownPct)') < giRun.indexOf('GlobalVariableGet("DG_KILL")'),
+     'both EAs check the account stop on every run, just before the kill switch that closes and stops');
+  ok(['DonchianGold.mq5', 'GoldIntraday.mq5'].every(f => /#include "AccountGuard\.mqh"/.test(readMt5(f)) && /input double InpMaxDrawdownPct = 15\.0;/.test(readMt5(f)) &&
+     /input double InpFixedLots\s*= 0;/.test(readMt5(f)) && /input double InpRiskPct\s*= 0\.5;/.test(readMt5(f))),
+     'both EAs: 0.5% risk a trade and the 15% account stop by default (owner, 6 Nov 2026)');
+}
+
+section('MT5 H4 trailing stop');
+const dgSrc = readMt5('DonchianGold.mq5'), parSrc = fs.readFileSync(path.join(__dirname, '..', 'research', 'parity_mt5.js'), 'utf8');
+const inputOf = (src, name) => { const m = src.match(new RegExp('input double ' + name + '\\s*=\\s*([0-9.]+);')); return m ? +m[1] : NaN; };
+ok(inputOf(dgSrc, 'InpTrailAtR') === 1 && inputOf(dgSrc, 'InpTrailDistR') === 0.5 && /trail: \{ at: 1, dist: 0\.5, broker: true \}/.test(parSrc),
+   'DonchianGold trails from +1R at 0.5R behind, the setting research/trail_lab.js chose, and research/parity_mt5.js runs the same');
+ok(!/trail/.test(readMt5('GoldIntraday.mq5').replace(/\/\/[^\n]*/g, '')), 'GoldIntraday has no trailing stop: none of the seven tried beat its current exits on 2023-2024');
+// Research: a long that runs to +1.2R and falls back is stopped 0.5R behind its best price; without the trail it is still open.
+const trailBars = () => {
+  const bars = [], t0 = Date.UTC(2026, 0, 5), at = i => t0 + i * 14400000;
+  for (let i = 0; i < 260; i++) bars.push({ t: at(i), o: 3000, h: 3030, l: 2970, c: 3000, sp: 0.3, v: 1 });
+  bars.push({ t: at(260), o: 3000, h: 3062, l: 2995, c: 3060, sp: 0.3, v: 1 });          // breakout close: long from the next open
+  bars.push({ t: at(261), o: 3060, h: 3204, l: 3055, c: 3200, sp: 0.3, v: 1 });          // +1.2R: the stop moves to 3204 - 0.5R
+  bars.push({ t: at(262), o: 3200, h: 3200, l: 3100, c: 3110, sp: 0.3, v: 1 });          // falls through it
+  for (let i = 263; i < 300; i++) bars.push({ t: at(i), o: 3110, h: 3115, l: 3105, c: 3110, sp: 0.3, v: 1 });
+  return bars;
+};
+const trCfg = trail => Object.assign(capCfg(150), { trail });
+const trOn = DTR.simulate(trailBars(), trCfg({ at: 1, dist: 0.5, broker: true })), trOff = DTR.simulate(trailBars(), trCfg(undefined));
+const trStop = trOn[0] ? 3204 - 0.5 * trOn[0].risk : NaN;
+ok(trOn.length === 1 && trOn[0].why === 'TRAIL' && trOn[0].exitT === Date.UTC(2026, 0, 5) + 262 * 14400000 &&
+   Math.abs(trOn[0].r * trOn[0].risk - (trStop * (1 - 0.0001) - (3060 + 0.3) * (1 + 0.0001))) < 0.01 &&
+   trOff.length === 1 && trOff[0].why !== 'TRAIL' && trOff[0].exitT > trOn[0].exitT,
+   'research: the long that reached +1.2R is stopped at ' + trStop.toFixed(2) + ', 0.5R behind its best price, on the next bar; without the trail it stays open');
+const trLate = DTR.simulate(trailBars().map((k, i) => (i === 261 ? Object.assign(k, { h: 3170, c: 3160 }) : i === 262 ? Object.assign(k, { o: 3160, h: 3165 }) : k)),
+                            trCfg({ at: 1, dist: 0.5, broker: true }));
+ok(trLate.length === 1 && trLate[0].why !== 'TRAIL', 'research: a trade that never got 1R ahead keeps its own stops');
+
+/** DonchianGold holding a position filled 5 s into a bar, with `extremes` as the closed bars' highs (lows for a short) since then. */
+const dgTrail = (dir, extremes, quote) => {
+  const b = fakeBroker({ magic: 20261009, open: goldOpen });
+  const T = srv(11, 2, 4), at = i => T + i * 14400;
+  for (let i = -30; i < 0; i++) b.bars.push({ time: at(i), open: 4000, high: 4010, low: 3990, close: 4000 });
+  extremes.forEach((x, i) => b.bars.push({ time: at(i), open: 4000, high: dir === 1 ? x : 4005, low: dir === 1 ? 3995 : x, close: 4000 }));
+  b.bars.push({ time: at(extremes.length), open: 4000, high: 4000, low: 4000, close: 4000 });   // the bar in progress
+  b.tick(at(extremes.length) + 30, quote);
+  b.position = { ticket: 51, dir, lots: 0.01, sl: 4000 - dir * 120, tp: 4000 + dir * 90, price: 4000, time: T + 5, magic: 20261009 };
+  b.gv.set(DG_GV + 'side', dir); b.gv.set(DG_GV + 'posid', 51); b.gv.set(DG_GV + 'stop', 4000 - dir * 60);
+  const ea = loadDonchianGold(b);
+  ea.OnInit();
+  b.tick(at(extremes.length) + 60, quote);
+  return { b, ea };
+};
+const Tn = dgTrail(1, [4040, 4055], 4045);
+Tn.ea.TrailStop(51, 1, 4000);
+ok(Tn.b.sends.length === 0, 'EA: best price $55 up on a $60 strategy stop (under 1R): the broker stop stays');
+const Tm = dgTrail(1, [4040, 4072, 4050], 4060);
+for (let i = 0; i < 4; i++) Tm.ea.TrailStop(51, 1, 4000);
+ok(Tm.b.sends.length === 1 && Tm.b.sends[0].kind === 'modify' && Tm.b.sends[0].sl === 4042 && Tm.b.sends[0].tp === 4090 &&
+   Tm.b.gv.get(DG_GV + 'trailed') === 1 &&
+   (rowsNamed(Tm.b, 'TRAIL')[0] || {}).detail === 'stop moved from 3880.000 to 4042.000: 0.5 x the strategy stop behind the best price 4072.000',
+   'EA: best price 4072 (+1.2R): the broker stop moves once to 4042, 0.5R behind it, the take-profit stays');
+Tm.b.bars.splice(-1, 0, { time: Tm.b.bars[Tm.b.bars.length - 1].time, open: 4050, high: 4060, low: 4040, close: 4045 });
+Tm.b.bars[Tm.b.bars.length - 1].time += 14400;
+Tm.ea.TrailStop(51, 1, 4000);
+ok(Tm.b.sends.length === 1, 'EA: a lower bar after that never loosens it');
+const Ts = dgTrail(-1, [3950, 3928], 3940);
+Ts.ea.TrailStop(51, -1, 4000);
+ok(Ts.b.sends.length === 1 && Ts.b.sends[0].sl === 3958 && Ts.b.sends[0].tp === 3910, 'EA: a short trails above its lowest low the same way (3928 + 30 = 3958)');
+const Tg = dgTrail(1, [4072], 4035);
+Tg.ea.TrailStop(51, 1, 4000);
+ok(!Tg.b.position && Tg.b.sends.length === 1 && Tg.b.sends[0].kind === 'close' && rowsNamed(Tg.b, 'EXIT_TRAIL').length === 1,
+   'EA: price already below the new level (a gap): closed at market as EXIT_TRAIL, as the research fills it at the open');
+const T0b = dgTrail(1, [], 4080);
+T0b.ea.TrailStop(51, 1, 4000);
+ok(T0b.b.sends.length === 0, 'EA: the bar it was filled in has not closed yet: nothing to read, nothing sent');
+const Tr = dgTrail(1, [4072], 4060);
+Tr.b.refuseWith = 10016;
+for (let i = 0; i < 5; i++) Tr.ea.TrailStop(51, 1, 4000);
+ok(Tr.b.sends.length === 1 && rowsNamed(Tr.b, 'ERROR').length === 1 && /it stays at 3880\.000$/.test(rowsNamed(Tr.b, 'ERROR')[0].detail),
+   'EA: refused for good: tried once, journaled once, the old stop stays');
+const Tc = dgTrail(1, [4072], 4060);
+Tc.b.refuseWith = RETCODES.TRADE_RETCODE_MARKET_CLOSED;
+Tc.ea.TrailStop(51, 1, 4000);
+Tc.b.refuseWith = null;
+Tc.ea.TrailStop(51, 1, 4000);
+const tcHeld = Tc.b.sends.length;
+Tc.b.tick(Tc.b.now + 30, 4060);
+Tc.ea.TrailStop(51, 1, 4000);
+ok(tcHeld === 1 && Tc.b.sends.length === 2 && Tc.b.position.sl === 4042, 'EA: "market closed": nothing resent until a new quote, then it moves');
+const To = dgTrail(1, [4072], 4060);
+To.ea.TrailStop(51, 1, 4000);
+To.b.closeAt(4042, 'DEAL_REASON_SL');
+To.ea.ReportOutsideClose(0);
+const Th = dgTrail(1, [4040], 4045);
+Th.b.closeAt(3880, 'DEAL_REASON_SL');
+Th.ea.ReportOutsideClose(0);
+ok(rowsNamed(To.b, 'EXIT_TRAIL').length === 1 && rowsNamed(Th.b, 'EXIT_HARDSTOP').length === 1 && !To.b.gv.has(DG_GV + 'trailed'),
+   'EA: a broker-stop close after a move is journaled EXIT_TRAIL (research TRAIL), one that never moved stays EXIT_HARDSTOP');
+const dgEx = dgFns.Run.body;
+ok(/if\(\(datetime\)GVGet\("lastbar", 0\) == closed\)\s*\{\s*if\(has\) TrailStop\(ticket, side, openPrice\);/.test(dgEx) &&
+   /if\(why != ""\) ClosePosition\(ticket, why\);\s*else TrailStop\(ticket, side, openPrice\);/.test(dgEx) &&
+   dgEx.indexOf('TrailStop(') > dgEx.indexOf('HistorySettling()'),
+   'Run trails only after the history wait and after the newest bar is decided, so an exit on that bar comes first');
+ok(/EXIT_NAMES\[\] = \{ "", "EXIT_STOP", "EXIT_CHANNEL", "EXIT_TIME", "KILL_SWITCH", "EXIT_RETRY", "EXIT_TRAIL" \}/.test(dgSrc) &&
+   /return EXIT_RETRY_CODE;/.test(dgFns.ExitCode.body) && /EXIT_RETRY_CODE = 5;/.test(dgSrc),
+   'EXIT_TRAIL is added at the end, so a pending exit saved by the old build keeps its meaning');
+}
+
+section('MT5 watchdog');
+{
+  const W = world({ markets: MARKETS, props: { MT5_KEY: 'mk' } });
+  // Thursday 5 Nov 2026 12:00 UTC = 14:00 broker time (offset +2 h): gold trades.
+  const now = Date.UTC(2026, 10, 5, 12, 0), off = 7200;
+  const row = (min, ea, strat, ev, detail) => ({ time: new Date(now - min * 60000), ea, strat, ev, eq: 10000, detail });
+  const okStarts = [row(600, 'DonchianGold', 'H4', 'START', 'XAUUSD.sml PERIOD_H4, risk 0.50%, account stop 15% below the peak, demo account 1'),
+                    row(600, 'GoldIntraday', 'ALL', 'START', 'XAUUSD.sml, risk 0.50% a trade, account stop 15% below the peak, demo account 1')];
+  okStarts.forEach(r => { r.time = new Date(Date.UTC(2026, 10, 6, 1)); });
+  const status = (dgMin, giMin, equity) => ({ DonchianGold: { seen: now - dgMin * 60000, equity, offset: off }, GoldIntraday: { seen: now - giMin * 60000, equity, offset: off } });
+  W.ctx.__in = { now, st: status(5, 8, 10000), log: okStarts, built: { trades: [], open: [] }, state: {} };
+  const run = () => W.run('watchdogCheck_(__in.now, __in.st, __in.log, __in.built, __in.state)');
+  let r = run();
+  ok(r.level === 'OK' && r.problems.length === 0 && r.state.peak === 10000 && r.state.seen === 2, 'watchdog: fresh heartbeats, new settings, no rows to worry about: OK, and it records the peak');
+  W.ctx.__in.st = status(40, 8, 10000); W.ctx.__in.state = r.state;
+  r = run();
+  ok(r.level === 'WARN' && /DonchianGold: silent for 40 minutes while gold trades/.test(r.problems[0].text), 'an EA silent for 40 minutes while gold trades is a WARN');
+  W.ctx.__in.now = Date.UTC(2026, 10, 7, 12, 0);
+  r = run();
+  ok(!r.problems.some(p => /silent/.test(p.text)), 'on a Saturday silence is normal');
+  W.ctx.__in.now = now; W.ctx.__in.st = status(5, 5, 8900); W.ctx.__in.state = { peak: 10000, seen: 2 };
+  r = run();
+  ok(r.level === 'WARN' && /11\.0% below its peak 10000\.00/.test(r.problems[0].text), '11% below the peak: WARN, the account stop is at 15%');
+  W.ctx.__in.st = status(5, 5, 8400);
+  r = run();
+  ok(r.level === 'ALERT' && /16\.0% below its peak/.test(r.problems[0].text), '16% below the peak: ALERT, the account stop should have fired');
+  W.ctx.__in.st = status(5, 5, 10000); W.ctx.__in.state = { peak: 10000, seen: 2 };
+  W.ctx.__in.log = okStarts.concat([row(20, 'GoldIntraday', 'NY_ORB', 'ENTRY_SHORT', 'stop order filled: 0.012 lots at 4000.000, stop 4010.000'),
+                                     row(10, 'GoldIntraday', 'DUAL_THRUST', 'ERROR', 'buy stop failed, retcode 10018 (market closed); will retry'),
+                                     row(5, 'DonchianGold', 'H4', 'KILL_SWITCH', 'account stop: equity 8500.00 is 15.0% below its peak')]);
+  W.ctx.__in.log.slice(2).forEach(x => { x.time = new Date(Date.UTC(2026, 10, 6, 2)); });
+  r = run();
+  const texts = r.problems.map(p => p.level + ' ' + p.text).join(' | ');
+  ok(r.level === 'ALERT' && /ALERT DonchianGold kill switch/.test(texts) && /WARN 1 ERROR row, latest DUAL_THRUST/.test(texts) && /retired strategy NY_ORB still trading/.test(texts),
+     'new rows: a kill switch is an ALERT; an error row and a retired strategy trading are WARNs: ' + texts);
+  W.ctx.__in.state = r.state;
+  r = run();
+  ok(r.level === 'OK', 'each row is reported once: the next check is OK again');
+  W.ctx.__in.log = [row(60, 'GoldIntraday', 'ALL', 'START', 'XAUUSD.sml, fixed 0.010 lots a trade, demo account 1')];
+  W.ctx.__in.log[0].time = new Date(Date.UTC(2026, 10, 6, 3)); W.ctx.__in.state = {};
+  r = run();
+  ok(r.problems.some(p => /GoldIntraday started without 0\.5% risk/.test(p.text)) && r.problems.some(p => /without the 15% account stop/.test(p.text)) &&
+     !r.problems.some(p => /demo account/.test(p.text)), 'an EA restarted on the old settings is a WARN, and the START row (account number) is never copied');
+  W.ctx.__in.log = okStarts; W.ctx.__in.state = {};
+  W.ctx.__in.built = { trades: [0.9, 0.7, 0.8, 0.6, 0.75].map(x => ({ slip: x })), open: [{ strat: 'MOM_16', stop: null, slip: null }] };
+  r = run();
+  ok(r.problems.some(p => p.level === 'ALERT' && /MOM_16 position open without a stop/.test(p.text)) && r.problems.some(p => /slipped \$0\.75 on average over the last 5 fills/.test(p.text)),
+     'a position without a stop is an ALERT; stop orders slipping $0.75 on average is a WARN');
+  W.run('watchdogEnsure_(); watchdogEnsure_();');
+  ok(W.run('ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === "runWatchdog").length') === 1, 'the watchdog installs its 15-minute timer once');
+  const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'Main.js'), 'utf8');
+  ok(mainSrc.split("!['runMorningMap', 'runWatchdog'].includes(t.getHandlerFunction())").length === 3,
+     'setup() and switching the old system off both keep the watchdog timer');
+  W.ctx.__in.built = { trades: [], open: [] };
+  W.run('watchdogWrite_(watchdogCheck_(__in.now, __in.st, __in.log, __in.built, {}))');
+  const wRows = rowsOf(W, 'MT5 Watchdog');
+  ok(wRows[0] && wRows[0][0] === 'Now: OK' && wRows[3] && wRows[3][1] === 'OK', 'the MT5 Watchdog tab shows the status line and a history row');
 }
 
 section('Web app: Telegram messages');
@@ -935,8 +1259,16 @@ ok(MM.triggers.filter(t => t.getHandlerFunction() === 'runMorningMap').length ==
 const fmtServer = ms => new Date(ms).toISOString().slice(0, 19).replace('T', ' ').replace(/-/g, '.');
 MM.run("doPost({ postData: { contents: JSON.stringify({ source: 'mt5', key: 'mk', ea: 'GoldIntraday', from: 1, offset: 10800, equity: 10000, balance: 10000, " +
        "lines: ['" + fmtServer(wedMorning - 60 * 60000 + 3 * H) + ",ALL,DAY,10000.00,open 4065.660, daily ATR 72.670, Dual Thrust 4019.820-4111.500, yesterday H/L/C 1/2/3'] }) } })");
-const mmBefore = MM.telegram.length;
+// The 07:30 timer now sends the MT5 daily report (owner, 6 Nov 2026); the map itself is still built and sent on demand.
+const repBefore = MM.telegram.length;
 MM.run('runMorningMap()');
+const repMsg = MM.telegram.slice(repBefore).filter(c => c.method === 'sendMessage')[0];
+ok(repMsg && String(repMsg.payload.chat_id) === '777' && /^<b>MT5 daily report<\/b>/.test(repMsg.payload.text) && /Status: <b>WARN<\/b>/.test(repMsg.payload.text) &&
+   /Closed in the last 24 h: 0/.test(repMsg.payload.text) && /DonchianGold: no heartbeat on record/.test(repMsg.payload.text) && !/<pre>/.test(repMsg.payload.text),
+   'on a weekday morning the 07:30 timer sends the MT5 daily report, not the map: status, trades, open positions, the watchdog\'s findings');
+ok(MM.triggers.filter(t => t.getHandlerFunction() === 'runWatchdog').length === 1, 'and it installs the watchdog\'s timer');
+const mmBefore = MM.telegram.length;
+MM.run('morningMapRun_("777")');
 const sent = MM.telegram.slice(mmBefore), msg = sent.filter(c => c.method === 'sendMessage')[0];
 ok(msg && String(msg.payload.chat_id) === '777' && msg.payload.parse_mode === 'HTML' && /4-hour zones/.test(msg.payload.text) && /<pre>/.test(msg.payload.text),
    'on a weekday morning the map goes to the owner\'s chat: zones in a fixed-width block');
@@ -951,8 +1283,10 @@ let satDay = wed;
 while (new Date(satDay).getUTCDay() !== 6) satDay += 24 * H;
 MM.setNow(satDay + 23 * H + 30 * 60000);                          // Saturday 23:30 UTC = Sunday 07:30: gold closed
 const satBefore = MM.telegram.length;
-MM.run('runMorningMap()');
+MM.run('morningMapRun_("777")');
 ok(MM.telegram.length === satBefore, 'nothing is sent while gold is closed');
+MM.run('runMorningMap()');
+ok(MM.telegram.length === satBefore, 'no MT5 daily report on Sunday morning: Saturday was no trading day');
 // Twelve Data also sends flat bars while gold is shut: pad the feed with them, as it does.
 const padded = [];
 MARKETS['XAU/USD'].forEach((k, i, a) => {
@@ -961,7 +1295,7 @@ MARKETS['XAU/USD'].forEach((k, i, a) => {
 });
 const MF = world({ markets: Object.assign({}, MARKETS, { 'XAU/USD': padded }), props: Object.assign({ TELEGRAM_BOT_TOKEN: 'tg', TELEGRAM_CHAT_ID: '777' }, KEYS) });
 MF.setNow(satDay + 23 * H + 30 * 60000);
-MF.run('runMorningMap()');
+MF.run('morningMapRun_("777")');
 ok(MF.telegram.length === 0 && padded.length > MARKETS['XAU/USD'].length, 'flat weekend bars from Twelve Data do not count as trading: Saturday stays silent');
 MF.setNow(wedMorning);
 MM.setNow(wedMorning);
@@ -979,6 +1313,13 @@ const research = require(path.join(__dirname, '..', 'research', 'sd_lab.js'));
 const rz = research.orderBlocks(c4.map((k, i) => Object.assign({}, k, { last: i })), 3, 50).map(z => [z.side, z.near, z.far, z.formed]);
 const az = JSON.parse(MM.run('JSON.stringify(morningOrderBlocks_(' + JSON.stringify(c4) + ', 3, 50))')).map(z => [z.side, z.near, z.far, z.at]);
 ok(rz.length > 10 && JSON.stringify(rz) === JSON.stringify(az), 'the morning map finds the same order blocks as research/sd_lab.js (' + az.length + ' on test data)');
+MM.ctx.__res = { problems: [{ level: 'ALERT', text: 'DonchianGold kill switch: account stop: equity 8500.00 is 15.0% below its peak', key: 'kill:1' }, { level: 'WARN', text: 'x', key: 'x' }], state: {} };
+const alBefore = MM.telegram.length;
+const al1 = MM.run('watchdogAlert_(__res, [])'), al2 = MM.run('watchdogAlert_(__res, __res.state.alerted)');
+const alMsg = MM.telegram.slice(alBefore).filter(c => c.method === 'sendMessage');
+ok(al1 === 1 && al2 === 0 && alMsg.length === 1 && /^MT5 ALERT/.test(alMsg[0].payload.text) && /account stop: equity 8500\.00/.test(alMsg[0].payload.text) &&
+   /Nothing restarts until we decide together/.test(alMsg[0].payload.text) && !/\bx\b/.test(alMsg[0].payload.text.split('\n')[2] || ''),
+   'an ALERT goes to Telegram once (not the WARNs), saying nothing restarts until the owner and Claude decide');
 MM.run('morningMapOff()');
 ok(MM.triggers.filter(t => t.getHandlerFunction() === 'runMorningMap').length === 0, 'Morning map: stop removes the timer');
 const O3 = world({ markets: MARKETS, props: { MT5_KEY: 'mk' }, triggers: ['runMonitor', 'runMorningMap'] });

@@ -1,5 +1,6 @@
 /**
- * Morning.gs — the gold morning map, sent to the owner's Telegram at 07:30 (the script's time zone), Monday-Friday.
+ * Morning.gs — the 07:30 Telegram timer. Since 6 Nov 2026 (owner) it sends the daily MT5 report (Watchdog.gs); the gold
+ * morning map below is kept for the menu's "send now" and for MORNING.send = 'map'.
  *
  * It sends: gold's 4-hour supply and demand zones (order blocks) nearest the price, the 4-hour trend, the levels
  * the MT5 EAs trade today (their latest lines in MT5 Log), whether the EAs are alive, and a picture of the 4-hour
@@ -12,14 +13,28 @@
  * Setup (menu Trading Agent → Morning map): TELEGRAM_BOT_TOKEN in Script Properties, send the bot a message, then
  * Connect Telegram. The chat ID is kept in Script Property TELEGRAM_CHAT_ID, never in code.
  */
-const MORNING = { symbol: 'XAU/USD', hour: 7, minute: 30, hourlyBars: 5000, pivot: 3, lookback: 50, show: 3, chartBars: 120 };
+// send: what the 07:30 timer sends. 'report' = the daily MT5 report (owner, 6 Nov 2026); 'map' = the gold map as before.
+const MORNING = { send: 'report', symbol: 'XAU/USD', hour: 7, minute: 30, hourlyBars: 5000, pivot: 3, lookback: 50, show: 3, chartBars: 120 };
 const MORNING_HOUR = 3600000, MORNING_H4 = 4 * 3600000;
 
 /* ---------------- menu and trigger ---------------- */
-/** Trigger, every day at 07:30: sends the map while gold trades; weekends and holidays stay silent. */
+/**
+ * Trigger, every day at 07:30. Sends the daily MT5 report (Watchdog.gs) after each broker trading day, or with
+ * MORNING.send = 'map' the gold map while gold trades. Weekends stay silent. The map is still on the menu (send now).
+ */
 function runMorningMap() {
+  try { watchdogEnsure_(); } catch (e) { logLine_('ERROR', 'Watchdog timer: ' + e.message); }   // Watchdog.gs: installs itself once
   const chat = telegramChatId_();
   if (!chat) { logLine_('WARN', 'Morning map: no Telegram chat connected'); return; }
+  if (MORNING.send === 'report') {
+    try { mt5DailyReportSend_(chat); } catch (e) { logLine_('ERROR', 'MT5 daily report: ' + e.message); }
+    return;
+  }
+  morningMapRun_(chat);
+}
+
+/** The gold map, when gold is open. */
+function morningMapRun_(chat) {
   try {
     const m = morningBuild_();
     if (!m.open) { logLine_('INFO', 'Morning map: gold is closed, nothing sent'); return; }
@@ -65,11 +80,11 @@ function telegramConnect_() {
   const chat = msgs[msgs.length - 1].chat;
   PropertiesService.getScriptProperties().setProperty('TELEGRAM_CHAT_ID', String(chat.id));
   morningMapOn_();
-  telegramCall_('sendMessage', { chat_id: String(chat.id), text: 'Connected. The gold morning map will arrive here at 07:30, Monday to Friday.' });
+  telegramCall_('sendMessage', { chat_id: String(chat.id), text: 'Connected. The MT5 daily report will arrive here at 07:30, Tuesday to Saturday, and any MT5 alert at once.' });
   logLine_('INFO', 'Telegram connected; morning map timer on');
   return { ok: true, text: 'Connected to the Telegram chat of ' + (chat.first_name || chat.username || 'this account') +
            ' (a confirmation was sent there). If that is not you, run Morning map: stop and remove TELEGRAM_CHAT_ID from Script Properties.\n\n' +
-           'The map arrives at 07:30 Monday to Friday. To see one now: Morning map: send now.' };
+           'The MT5 daily report arrives at 07:30, Tuesday to Saturday; alerts come at once. To see the gold map now: Morning map: send now.' };
 }
 
 /** The daily timer (07:30 in the script's time zone). Replaces any earlier one. */

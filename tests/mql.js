@@ -126,6 +126,11 @@ function fakeBroker({ magic, open }) {
       b.closeAt(b.position.dir === 1 ? b.quote.bid : b.quote.ask, 'DEAL_REASON_EXPERT');
       return true;
     },
+    PositionModify: (t, sl, tp) => {
+      if (!reply(send('modify', { ticket: t, sl, tp }))) return false;
+      Object.assign(b.position, { sl, tp });
+      return true;
+    },
     ResultRetcode: () => b.rc,
     ResultRetcodeDescription: () => (b.rc === RETCODES.TRADE_RETCODE_MARKET_CLOSED ? 'market closed' : 'retcode ' + b.rc),
     ResultPrice: () => b.price,
@@ -175,7 +180,7 @@ function fakeBroker({ magic, open }) {
     HistoryDealGetInteger: (d, k) => (k === 'DEAL_ENTRY' ? 'DEAL_ENTRY_OUT' : k === 'DEAL_REASON' ? b.dealsOf[d - 1].reason : k === 'DEAL_TIME' ? b.dealsOf[d - 1].time : 0),
     HistoryDealGetDouble: (d) => b.dealsOf[d - 1].price,
     iTime: (s, tf, shift) => { const r = b.bars[b.bars.length - 1 - shift]; return r ? r.time : 0; },
-    iBarShift: () => 0,
+    iBarShift: (s, tf, t) => { for (let i = b.bars.length - 1; i >= 0; i--) if (b.bars[i].time <= t) return b.bars.length - 1 - i; return -1; },
     CopyRates: (s, tf, start, count, r) => {
       r.length = 0;
       if (tf === 'PERIOD_M1') {                                       // by date: start and count are the first and last times
@@ -187,6 +192,8 @@ function fakeBroker({ magic, open }) {
       return r.length;
     }
   });
+  // Both EAs include mt5/AccountGuard.mqh: its real code, on this broker.
+  b.env.DrawdownStop = loadEa('AccountGuard.mqh', { env: b.env }).DrawdownStop;
   return b;
 }
 

@@ -61,7 +61,7 @@ if (!ea.length) { console.log('The journal has no completed trades.'); process.e
 
 const bars = R.toH4(R.load('XAUUSD.sml_H1.csv'));
 const cfg = { dir: 'both', N: 20, M: 10, k: 2, ema: 100, maxBars: 60, barMin: 240, flat: false,
-              swapLong: -5.92, swapShort: 3.67, hardK: 4, targetR: 1.5, targetWait: true, firstEntryMin: 0, lastEntryMin: 24 * 60, flatMin: Infinity,
+              swapLong: -5.92, swapShort: 3.67, hardK: 4, targetR: 1.5, targetWait: true, maxStop: 150, trail: { at: 1, dist: 0.5, broker: true }, firstEntryMin: 0, lastEntryMin: 24 * 60, flatMin: Infinity,
               from: -Infinity, to: Infinity };
 // Compare from 3 months after the EA's first decision: before that, the EMA seeds differ
 // (the tester has older history than the exported file).
