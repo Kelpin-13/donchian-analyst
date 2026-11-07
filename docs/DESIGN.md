@@ -647,3 +647,10 @@ The owner argued that news gives faster momentum and could set the day's bias. `
 
 - **FAIL, today's rule stays.** On 2025-26 the strong-close entry had a better profit / drawdown (5.88 against 5.37) but only 79% of the profit (+24.8 R against +31.5 R, 95 trades against 109): it skips good trades as well as bad ones. Under the 90% rule fixed in advance it is not kept.
 - H4 is the book's most robust strategy at realistic fills: today's rule made +31.5 R on 2025-26, above 0 in every run. The fresh month: 4 trades, +1.6 R.
+
+## 32. "Buy when low, sell when high": fading the range edges, tested, not built (owner request, 7 Nov 2026)
+
+`research/fade_lab.js`, rules fixed before running, 1-hour bars 2023-04 to 2026-10: a buy limit at the lowest low of the last N bars and a sell limit at the highest high (N = 20 or 50), stop 1 ATR beyond, target the middle of the range, out after 24 bars; on all days or only on ranging days (efficiency ratio < 0.25). Realistic fills, 100 runs.
+
+- **FAIL, the clearest of all.** Every choice lost in both halves, also with ideal fills. Picked on 2023-24: N50, ranging days only (-143.0 R); 2025-26: -99.9 R, PF 0.69, 19% of trades won, no run above 0. Even on ranging days, a touch of the range's edge was more often followed by more of the same move than by a return to the middle.
+- With sections 26, 28, 29 and `sd_lab.js`, every rule that bets on a reversal at a level has failed on this broker's gold; every rule that bets on continuation (H4, Dual Thrust, R-Breaker's breakout side, the Asian breakout) has made money. Untested: buying a low only inside an established uptrend (a pullback, a trend rule rather than a fade), on daily bars from 2008.
