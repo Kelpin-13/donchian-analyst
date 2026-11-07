@@ -654,3 +654,10 @@ The owner argued that news gives faster momentum and could set the day's bias. `
 
 - **FAIL, the clearest of all.** Every choice lost in both halves, also with ideal fills. Picked on 2023-24: N50, ranging days only (-143.0 R); 2025-26: -99.9 R, PF 0.69, 19% of trades won, no run above 0. Even on ranging days, a touch of the range's edge was more often followed by more of the same move than by a return to the middle.
 - With sections 26, 28, 29 and `sd_lab.js`, every rule that bets on a reversal at a level has failed on this broker's gold; every rule that bets on continuation (H4, Dual Thrust, R-Breaker's breakout side, the Asian breakout) has made money. Untested: buying a low only inside an established uptrend (a pullback, a trend rule rather than a fade), on daily bars from 2008.
+
+## 33. The "3-candle daily bias", tested, not built (owner's videos, 8 Nov 2026)
+
+`research/three_bar_lab.js`, rules fixed before running: a long bias when yesterday closed above the high of the day before, a short bias when it closed below its low, none after an outside bar, carried over after an inside bar. Tested as a claim (does today reach yesterday's extreme?) and as a filter on the four intraday strategies still trading, with realistic fills, 100 runs.
+
+- **The claim is half true and of no use.** After a long bias, today beat yesterday's high on 74% of days (52% on all days), but closed up on only 51%. The target is close by, because yesterday closed near its own high, so it is touched more often; the direction of the day is a coin toss. H4 is the same (65% touched, 50% closed with the bias).
+- **As a filter: FAIL.** Trading only the bias side (F1) was best on 2023-24 (ratio 1.62 against 0.31 unfiltered) and lost on 2025-26 (-9.8 R against +22.4 R). Blocking only the side against the bias (F2) was the worst choice on 2023-24 and the best on 2025-26: a filter whose ranking flips between halves is noise. Nothing changes in the EAs.
