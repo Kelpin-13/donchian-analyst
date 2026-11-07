@@ -2,18 +2,19 @@
 //| ExportBars.mq5                                                   |
 //| Writes gold's 1-minute, 15-minute and 1-hour bars (XAUUSD.sml,   |
 //| 2023 onwards) to MQL5/Files/XAUUSD.sml_M1.csv, _M15.csv and      |
-//| _H1.csv in MT5's own Bars-export format, for the research in     |
-//| research/ (copy the three files to data/). Run it once on any    |
-//| chart: it only reads price history and places no orders.         |
+//| _H1.csv, plus daily and 1-hour bars from 2008 to _D1_2008.csv    |
+//| and _H1_2008.csv, in MT5's own Bars-export format, for research/ |
+//| (copy the files to data/). Run it once on any chart: it only     |
+//| reads price history and places no orders.                        |
 //+------------------------------------------------------------------+
 #property copyright "Donchian Analyst"
-#property version   "1.10"
-#property description "Exports gold M1, M15 and H1 bars for the research. Places no orders."
+#property version   "1.20"
+#property description "Exports gold bars for the research (M1, M15, H1 from 2023; D1, H1 from 2008). Places no orders."
 
-const string          SYMBOL = "XAUUSD.sml";
-const datetime        FROM   = D'2023.01.01';
-const ENUM_TIMEFRAMES PERIODS[] = { PERIOD_M1, PERIOD_M15, PERIOD_H1 };
-const string          NAMES[]   = { "M1", "M15", "H1" };
+const string          SYMBOL    = "XAUUSD.sml";
+const ENUM_TIMEFRAMES PERIODS[] = { PERIOD_M1, PERIOD_M15, PERIOD_H1, PERIOD_D1, PERIOD_H1 };
+const string          NAMES[]   = { "M1", "M15", "H1", "D1_2008", "H1_2008" };
+const datetime        FROMS[]   = { D'2023.01.01', D'2023.01.01', D'2023.01.01', D'2008.01.01', D'2008.01.01' };
 
 // One month of bars; the terminal may still be loading history, so a few retries.
 int CopyMonth(const ENUM_TIMEFRAMES period, const datetime from, const datetime to, MqlRates &rates[])
@@ -30,7 +31,7 @@ int CopyMonth(const ENUM_TIMEFRAMES period, const datetime from, const datetime 
   }
 
 // One timeframe to one file. Returns a line for the summary, or "" if it could not write.
-string ExportOne(const ENUM_TIMEFRAMES period, const string name, const int digits)
+string ExportOne(const ENUM_TIMEFRAMES period, const string name, const datetime fromDate, const int digits)
   {
    string file = SYMBOL + "_" + name + ".csv";
    int h = FileOpen(file, FILE_WRITE | FILE_TXT | FILE_ANSI);
@@ -39,7 +40,7 @@ string ExportOne(const ENUM_TIMEFRAMES period, const string name, const int digi
    long total = 0;
    datetime first = 0, last = 0, now = TimeTradeServer();
    MqlDateTime m;
-   TimeToStruct(FROM, m);
+   TimeToStruct(fromDate, m);
    while(!IsStopped())
      {
       m.day = 1; m.hour = 0; m.min = 0; m.sec = 0;
@@ -75,7 +76,7 @@ void OnStart()
    string msg = "ExportBars: " + SYMBOL;
    for(int k = 0; k < ArraySize(PERIODS) && !IsStopped(); k++)
      {
-      string line = ExportOne(PERIODS[k], NAMES[k], digits);
+      string line = ExportOne(PERIODS[k], NAMES[k], FROMS[k], digits);
       if(line == "") return;
       msg += "\n" + line;
      }
