@@ -27,6 +27,7 @@
 //| an outage no bar is read for a minute, so MT5 can fill its       |
 //| history.                                                         |
 //|                                                                  |
+//| 1.17: Asian range breakout at half risk (owner, 7 Nov 2026).     |
 //| 1.16: New York ORB and momentum at 20:00 retired (owner, 6 Nov   |
 //| 2026): both off by default; they lost money once fills were /usr/bin/bash.50|
 //| worse (research/stress_lab.js).                                  |
@@ -35,7 +36,7 @@
 //| (M15, 1 minute OHLC).                                            |
 //+------------------------------------------------------------------+
 #property copyright   "Donchian Analyst (personal research)"
-#property version     "1.16"
+#property version     "1.17"
 #property description "Six intraday gold strategies, flat before the rollover. Demo accounts only."
 
 #include <Trade\Trade.mqh>
@@ -61,7 +62,7 @@ input double InpMaxStopUsd   = 150.0;  // Skip a trade whose stop would cost mor
 
 input group "Risk per strategy, only when the fixed size is 0 (x the risk above; 1 = the same, 0.5 = half)"
 input double InpWNyOrb      = 1.0;     // 1 New York ORB
-input double InpWAsian      = 1.0;     // 2 Asian range breakout
+input double InpWAsian      = 0.5;     // 2 Asian range breakout (halved 7 Nov 2026: marginal at realistic fills, DESIGN 30)
 input double InpWDualThrust = 1.0;     // 3 Dual Thrust
 input double InpWRBreaker   = 1.0;     // 4 R-Breaker
 input double InpWMom16      = 1.0;     // 5 Momentum at 16:00

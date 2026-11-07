@@ -614,3 +614,20 @@ The owner argued that news gives faster momentum and could set the day's bias. `
 
 - **FAIL.** Picked on 2023-24: L2 T2 (-12.8 R, PF 0.83). 2025-26: -21.8 R, PF 0.60, no run above 0. Every choice lost in both halves, also with $0.05 fills (PF 0.46-0.94); 70-78% of trades hit their stop. The fresh month had 3 trades.
 - With section 28 and `research/sd_lab.js` (69 supply/demand, order-block and FVG versions), five families of "smart money" rules have now failed on this broker's gold, all with rules written before the run. The rules that pass here are breakouts and trend-following, where a move past a level keeps going rather than reversing.
+
+## 30. A more precise Asian breakout: entry, stop, target and filter (owner request, 7 Nov 2026)
+
+`research/breakout_lab.js` changed ASIAN_NARROW one thing at a time, fixed before running, each change kept only if it beat the rule before it on 2023-24 with realistic fills (section 24, 100 runs). Its engine check reproduces ASIAN_NARROW exactly (331 trades).
+
+| 2023-24, median over 100 runs | Trades | R | Worst drawdown R | Profit / drawdown |
+|---|---:|---:|---:|---:|
+| **Today**: stop order at the edge, stop the other side, 1.5R, below-median nights | 245 | +8.6 | 21.0 | 0.41 |
+| Entry 0.1 ATR beyond the edge | 181 | -16.0 | 30.8 | -0.52 |
+| Entry after a 15-minute close beyond the edge | 233 | -17.6 | 37.0 | -0.47 |
+| Limit entry on the retest of the edge | 195 | -0.9 | 18.2 | -0.05 |
+| Stop at the middle of the range | 245 | -33.0 | 48.1 | -0.67 |
+| Take-profit 2.5R | 245 | +3.1 | 34.2 | 0.09 |
+| Quietest third of nights only | 163 | +3.4 | 21.5 | 0.15 |
+
+- **Nothing beat today's rule**, so it stays as it is. Waiting for confirmation or a buffer gives back the move; a tighter stop is hit far more often; a further target is reached less often.
+- **The bigger finding: ASIAN_NARROW itself is marginal at realistic fills.** On 2025-26 it made a median -2.0 R (86 trades, above 0 in 13% of runs); the fresh month had 3 trades, -0.5 R. Its stops are the smallest of the five (a narrow range), so each dollar of slippage costs it the most R. **Owner decision, 7 Nov 2026: halve its risk** (GoldIntraday 1.17, `InpWAsian = 0.5`: 0.25% a trade) and judge it after about three months of real fills.
