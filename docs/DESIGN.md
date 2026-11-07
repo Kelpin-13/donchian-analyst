@@ -631,3 +631,19 @@ The owner argued that news gives faster momentum and could set the day's bias. `
 
 - **Nothing beat today's rule**, so it stays as it is. Waiting for confirmation or a buffer gives back the move; a tighter stop is hit far more often; a further target is reached less often.
 - **The bigger finding: ASIAN_NARROW itself is marginal at realistic fills.** On 2025-26 it made a median -2.0 R (86 trades, above 0 in 13% of runs); the fresh month had 3 trades, -0.5 R. Its stops are the smallest of the five (a narrow range), so each dollar of slippage costs it the most R. **Owner decision, 7 Nov 2026: halve its risk** (GoldIntraday 1.17, `InpWAsian = 0.5`: 0.25% a trade) and judge it after about three months of real fills.
+
+## 31. A more precise H4 entry, stop, target and trend filter (owner request, 7 Nov 2026)
+
+`research/h4_lab.js`, the same method as section 30 on DonchianGold 1.08 (trail included), realistic fills, 100 runs. Two entry options were added to `research/daytrade.js`, both off by default (`cfg.entryBuf`, `cfg.strongClose`).
+
+| 2023-04 to 2024-12, median over 100 runs | Trades | R | Worst drawdown R | Profit / drawdown |
+|---|---:|---:|---:|---:|
+| **Today** | 100 | +16.5 | 7.6 | 2.17 |
+| Close 0.25 ATR beyond the channel | 88 | +10.2 | 6.3 | 1.59 |
+| Strong close (outer quarter of the bar): kept | 87 | +18.9 | 5.2 | 3.71 |
+| ...then stop 1.5 / 2.5 ATR | 102 / 77 | +5.1 / +15.1 | 7.5 / 4.2 | 0.69 / 3.51 |
+| ...then take-profit 2.5R / none | 86 / 88 | +15.8 / +13.6 | 5.8 / 5.9 | 2.72 / 2.34 |
+| ...then EMA 200 | 79 | +11.5 | 7.2 | 1.59 |
+
+- **FAIL, today's rule stays.** On 2025-26 the strong-close entry had a better profit / drawdown (5.88 against 5.37) but only 79% of the profit (+24.8 R against +31.5 R, 95 trades against 109): it skips good trades as well as bad ones. Under the 90% rule fixed in advance it is not kept.
+- H4 is the book's most robust strategy at realistic fills: today's rule made +31.5 R on 2025-26, above 0 in every run. The fresh month: 4 trades, +1.6 R.

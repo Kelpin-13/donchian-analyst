@@ -110,8 +110,12 @@ function simulate(bars, cfg, ser) {
     if (!pos) {
       const inSession = closeMin >= cfg.firstEntryMin && closeMin <= cfg.lastEntryMin;
       if (!inSession) continue;
-      if (cfg.dir !== 'short' && k.c > up && k.c > e && waitSide !== 1) pending = { type: 'LONG', stopDist: cfg.k * a };
-      else if (cfg.dir !== 'long' && k.c < lo && k.c < e && waitSide !== -1) pending = { type: 'SHORT', stopDist: cfg.k * a };
+      // research/h4_lab.js options, both off by default: cfg.entryBuf = the close must clear the channel by that many ATRs;
+      // cfg.strongClose = the close must sit in the bar's outer part (0.75: top quarter for a buy, bottom quarter for a sell).
+      const buf = (cfg.entryBuf || 0) * a, rng = k.h - k.l, place = rng > 0 ? (k.c - k.l) / rng : 0.5;
+      const strongUp = !cfg.strongClose || place >= cfg.strongClose, strongDn = !cfg.strongClose || place <= 1 - cfg.strongClose;
+      if (cfg.dir !== 'short' && k.c > up + buf && k.c > e && waitSide !== 1 && strongUp) pending = { type: 'LONG', stopDist: cfg.k * a };
+      else if (cfg.dir !== 'long' && k.c < lo - buf && k.c < e && waitSide !== -1 && strongDn) pending = { type: 'SHORT', stopDist: cfg.k * a };
     } else if (pos.side === 1) {
       if (k.c <= pos.stop) pending = { type: 'EXIT', why: 'STOP' };
       else if (k.c < xl) pending = { type: 'EXIT', why: 'CHANNEL' };
