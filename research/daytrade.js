@@ -43,12 +43,20 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, 'Indicator.js'), 'utf8'), ctx); 
 const POINT = 0.001;            // XAUUSD.sml: 3 digits
 const SLIP = 0.0001;            // extra slippage per side, fraction of price (0.01%)
 
-/** MT5 "Export Bars" file → candles. Times stay on the server clock (as if UTC). */
-function load(file) {
+/**
+ * The fresh period: bars from 9 Oct 2026 (server time) were first exported on 7 Nov 2026, after every study so far.
+ * They are kept out unless a study asks for them (opts.fresh), so the research can't tune on them by accident and they
+ * stay an honest unseen test (data/reports/research_queue.md item 4). Results made before 7 Nov reproduce unchanged.
+ */
+const FRESH_FROM = Date.UTC(2026, 9, 9);
+
+/** MT5 "Export Bars" file → candles. Times stay on the server clock (as if UTC). opts.fresh: keep bars from FRESH_FROM. */
+function load(file, opts) {
+  const fresh = !!(opts && opts.fresh);
   return fs.readFileSync(path.join(ROOT, 'data', file), 'utf8').trim().split(/\r?\n/).slice(1).map(line => {
     const [d, t, o, h, l, c, tv, , sp] = line.split('\t');
     return { t: Date.parse(d.replace(/\./g, '-') + 'T' + t + 'Z'), o: +o, h: +h, l: +l, c: +c, v: +tv, sp: +sp * POINT };
-  });
+  }).filter(b => fresh || b.t < FRESH_FROM);
 }
 
 const minuteOfDay = t => { const d = new Date(t); return d.getUTCHours() * 60 + d.getUTCMinutes(); };
@@ -246,7 +254,7 @@ if (require.main === module) {
   });
 }
 
-module.exports = { load, simulate, series, stats, walkForward, toH4 };
+module.exports = { load, simulate, series, stats, walkForward, toH4, FRESH_FROM };
 
 /** H1 → H4 on the server clock (00, 04, 08 … server time), keeping the bar's lowest spread. */
 function toH4(h1) {
