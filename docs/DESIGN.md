@@ -595,3 +595,22 @@ The owner argued that news gives faster momentum and could set the day's bias. `
 `mt5/ExportBars.mq5` 1.10 now writes M1, M15 and H1 in one run. The 7 Nov export matched the old files bar for bar except each old file's last bar (exported while it was still forming); the old files are in `data/backup_20261008/`. Bars from 9 Oct 2026 are the fresh, unseen period: `load()` in `research/daytrade.js` drops them unless a study passes `{ fresh: true }` (`FRESH_FROM`), so every earlier result reproduces (`stress_lab.js`: the book of five +$4,943 / $678, unchanged). Before the cut was added, `news_lab.js` and `stress_lab.js` ran once on the new files (news momentum still FAIL); nothing was chosen from that run. Section 26 now quotes the cut data (the old M1 file had run to 29 Oct).
 
 **Tester confirmation of DonchianGold 1.08 and GoldIntraday 1.16 (7 Nov 2026).** Both ran with the old saved inputs (fixed 0.01 lots, all six intraday strategies), so they test the code, not the new sizing. DonchianGold H4 2023.01.01-2026.10.08, 1 minute OHLC: 12667.34, every journal row the same as 1.07's run except the SKIP wording ("at 0.01 lots"), parity 94.3% (the slippage gap of section 20 above). GoldIntraday M15 2023.01.01-2026.10.30: 14032.00, every row the same as 1.15's, parity on the five strategies still trading 95.1% PASS. A run at 0.5% risk with the two strategies off was skipped by the owner; the demo's first trades and the daily review check the sizes instead.
+
+## 28. AMD (accumulation, manipulation, distribution): tested, not built (owner request, 7 Nov 2026)
+
+`research/amd_lab.js`, rules fixed before running: the Asian range (bars opening 01:00-08:45 server) is the accumulation; a bar opening 09:00-15:45 that runs past one side by 0.1 x the daily ATR is the manipulation, counted when a bar closes back inside within 2 hours; enter the other way at the next open, stop 0.05 ATR beyond the sweep's extreme, out at the target, the stop or 23:00. Four choices: target the far side of the range (skipped under 1R) or 2R, with or without the H4 trend filter. Realistic fills as in section 24, 100 runs.
+
+| Picked on 2023-24: far side of the range, with the H4 trend | 2023-24 | 2025-26 |
+|---|---:|---:|
+| Trades | 36 | 42 |
+| Median total R / profit factor | -14.9 / 0.43 | -11.3 / 0.62 |
+| Runs above 0 | 0% | 0% |
+
+- **FAIL**, and every one of the four choices lost in both halves, also with $0.05 fills (PF 0.45-0.76). About two thirds of the trades were stopped out: the "sweep" stayed the day's high or low on only 35% of setups. On this broker's gold, a run past the Asian range more often keeps going, which is what ASIAN_NARROW trades. Turning this rule around now would be choosing after seeing the result; it would need its own study with fresh rules and the fresh period.
+
+## 29. AMD with a liquidity sweep and an FVG entry: tested, not built (owner request, 7 Nov 2026)
+
+`research/amd_fvg_lab.js`, on 5-minute bars from M1, rules fixed before running: liquidity = the Asian range (L1), or it plus the previous day's high and low (L2); a sweep past a pool by 0.1 x ATR between 09:00 and 16:00; then, within 2 hours, a fair value gap the other way with the bar closing back inside the swept level; a limit order at the gap's middle until 16:00; stop beyond the sweep's extreme; target the far side of the Asian range (T1) or 2R (T2); out at 23:00. Four choices, realistic fills, 100 runs; the fresh month reported once.
+
+- **FAIL.** Picked on 2023-24: L2 T2 (-12.8 R, PF 0.83). 2025-26: -21.8 R, PF 0.60, no run above 0. Every choice lost in both halves, also with $0.05 fills (PF 0.46-0.94); 70-78% of trades hit their stop. The fresh month had 3 trades.
+- With section 28 and `research/sd_lab.js` (69 supply/demand, order-block and FVG versions), five families of "smart money" rules have now failed on this broker's gold, all with rules written before the run. The rules that pass here are breakouts and trend-following, where a move past a level keeps going rather than reversing.
