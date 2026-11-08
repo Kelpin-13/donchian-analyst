@@ -661,3 +661,10 @@ The owner argued that news gives faster momentum and could set the day's bias. `
 
 - **The claim is half true and of no use.** After a long bias, today beat yesterday's high on 74% of days (52% on all days), but closed up on only 51%. The target is close by, because yesterday closed near its own high, so it is touched more often; the direction of the day is a coin toss. H4 is the same (65% touched, 50% closed with the bias).
 - **As a filter: FAIL.** Trading only the bias side (F1) was best on 2023-24 (ratio 1.62 against 0.31 unfiltered) and lost on 2025-26 (-9.8 R against +22.4 R). Blocking only the side against the bias (F2) was the worst choice on 2023-24 and the best on 2025-26: a filter whose ranking flips between halves is noise. Nothing changes in the EAs.
+
+## 34. The failed breakdown (Patrick Nill), tested, not built (owner, 8 Nov 2026)
+
+`research/failed_break_lab.js`, rules fixed before running, 15-minute bars 2023-04 to 2026-10, long only: a range of the last 6 or 12 hours, no taller than 0.6 daily ATR, its bottom touched 3 times, optionally after a push up; a close below it, then within an hour a close back inside; a buy limit at the bottom, stop at the false low, target 3R, out after 12 hours. Realistic fills, 100 runs.
+
+- **FAIL.** Every choice lost in both halves, also with ideal fills. The best on 2023-24 (12-hour range after a push) had only 10 trades there and 3 in 2025-26, all losers; the version without the push filter traded 70-140 times a half and lost 27-70 R. About 3 in 4 trades went straight back through the false low.
+- What the video could not give: he draws his ranges by eye and says he keeps those rules to himself, and he reads volume profile, which gold CFD data cannot supply. So this tests the published idea, not his whole method. The published idea is one more reversal at a level, and it failed like the others (sections 26, 28, 29, 32).
