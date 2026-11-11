@@ -104,6 +104,7 @@ function backtest(bars, S, cost) {
     const planned = spec.level !== undefined && spec.stop !== undefined ? Math.abs(spec.level - spec.stop)
                   : spec.stopDist !== undefined ? spec.stopDist : Math.abs(raw - spec.stop);
     if (tooWide(planned)) return;                          // over the cap: the EA never sends it
+    if (cost.entryGuard && cost.entryGuard(bars[i].t)) return;   // research/spread_guard_lab.js (default off): spread too wide, no new entry
     const fill = isLimit ? raw : raw + side * slip(raw, bars[i].t);   // raw is already Ask for a buy, Bid for a sell
     const stop = spec.stop !== undefined ? spec.stop : fill - side * spec.stopDist;
     const risk = (fill - stop) * side;
@@ -146,7 +147,7 @@ function backtest(bars, S, cost) {
 
     orders = orders.filter(o => m < o.until);
     if (!pos && orders.length && dayTrades < S.maxPerDay) {
-      const hit = orders.filter(o => !tooWide(Math.abs(o.level - o.stop)) &&       // over the cap it never rests at the broker
+      const hit = (cost.entryGuard && cost.entryGuard(k.t) ? [] : orders).filter(o => !tooWide(Math.abs(o.level - o.stop)) &&       // over the cap it never rests at the broker
                                      (o.limit ? (o.side === 1 ? k.l + k.sp <= o.level : k.h >= o.level)
                                               : (o.side === 1 ? k.h + k.sp >= o.level : k.l <= o.level)));
       if (hit.length) {

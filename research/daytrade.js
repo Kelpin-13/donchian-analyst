@@ -139,6 +139,7 @@ function simulate(bars, cfg, ser) {
 
   function open(sig, k) {
     if (cfg.maxStop && sig.stopDist > cfg.maxStop) return null;     // over the cap: the EA journals a SKIP
+    if (cfg.entryGuard && cfg.entryGuard(k.t)) return null;         // research/spread_guard_lab.js (default off): spread too wide, no new entry
     const side = sig.type === 'LONG' ? 1 : -1;
     // Buy at Ask (Bid + spread), sell at Bid; slippage against us either way.
     // cfg.slipUsd (stress tests only, default 0): that many extra dollars of slippage on top, every non-limit fill;
