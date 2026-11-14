@@ -684,3 +684,73 @@ Owner: "chasing the trend is good, can we add more rule for entering?" `research
 - **The entry itself works.** All four choices made money in 2025-26 in every run, also with ideal fills. The pick (dip to EMA 21, ride until a close below it): 78 trades, PF 1.26, +11.4 R. It is the first idea from the owner's videos that makes money on its own, and it is a continuation rule, like everything else that has worked here.
 - **It does not improve the book: FAIL.** Added to the H4 breakout in 2025-26, profit rose from 32.4 R to 44.0 R but the worst drawdown went from 5.9 R to 13.1 R (ratio 5.56 -> 3.35). Both rules ride the same trends and lose together when a trend ends, so the extra entries mostly add risk at the wrong time. The ratio does not depend on the trade size, so a smaller size does not fix it.
 - Next, if wanted: the same pre-registered rules on 2008-2022 bars (ExportBars 1.21), where the H4 breakout had weaker years. A pair that only helps in one era is still not built.
+
+## 37. Neighbouring settings (plateau): tested, nothing changed (research queue item 2, 12 Nov 2026)
+
+`research/plateau_lab.js`, grid and pass rule fixed before the single run: each strategy's main settings moved one and two steps either side, one setting at a time, each strategy alone in R, 2023-04 to 2026-10-08, the section 24 fills, 100 runs with the same seeds for every setting. Pass per strategy: every neighbour has a median total R above 0 and at least 60% of today's setting's. The intraday strategies are rebuilt in the lab with the setting as a parameter (`research/intraday.js` is not edited); at today's values they reproduce the portfolio trade for trade (284, 331, 102, 542 trades). Nothing is picked: a neighbour that did better is not adopted, because that would be tuning on 2025-26.
+
+| Median total R (% of today) | Two down | One down | Today | One up | Two up |
+|---|---:|---:|---:|---:|---:|
+| H4 entry channel N (10, 15, 20, 25, 30) | 46.6 (94%) | 45.5 (92%) | 49.4 | 42.9 (87%) | 45.0 (91%) |
+| H4 exit channel M (6, 8, 10, 12, 14) | 36.4 (74%) | 42.2 (85%) | 49.4 | 53.2 (108%) | 48.8 (99%) |
+| H4 stop k x ATR (1.5, 1.75, 2, 2.25, 2.5) | **25.5 (52%)** | 36.3 (74%) | 49.4 | 44.0 (89%) | 29.9 (61%) |
+| H4 trend EMA (50, 75, 100, 125, 150) | 43.2 (87%) | 45.4 (92%) | 49.4 | 41.2 (83%) | 42.4 (86%) |
+| Dual Thrust days N (2, 3, 4, 5, 6) | **3.2 (44%)** | 7.3 (100%) | 7.3 | **3.3 (45%)** | **0.2 (3%)** |
+| Dual Thrust trigger k (0.3, 0.4, 0.5, 0.6, 0.7) | **-7.7** | **2.2 (30%)** | 7.3 | 6.7 (92%) | **1.2 (17%)** |
+| Asian Narrow threshold percentile (30, 40, 50, 60, 70) | 5.8 (78%) | 10.3 (140%) | 7.4 | 10.4 (141%) | 5.2 (71%) |
+| R-Breaker stop x daily ATR (0.3, 0.4, 0.5, 0.6, 0.7) | 7.6 (73%) | 9.7 (92%) | 10.5 | 9.2 (88%) | 7.0 (67%) |
+| MOM_16 signal hour (14, 15, 16, 17, 18) | 10.8 (100%) | **-0.3** | 10.8 | **-3.0** | 14.2 (132%) |
+
+Bold = fails the rule.
+
+- **R-Breaker and Asian Narrow: PASS** (4 of 4 neighbours each). R-Breaker is the flattest of the intraday four. Asian Narrow passes on the ratios but is thin at every setting (today's: worst 5% of runs +0.5 R, above 0 in 96%), as section 30 found.
+- **H4: FAIL on the written rule, by one cell.** 15 of 16 neighbours pass and all 16 made money in every one of the 100 runs; only the 1.5 ATR stop keeps less than 60% (52%). Entry channel, exit channel and EMA are a plateau (74-108%); the stop width is the sensitive setting, and 2 ATR is its peak (2.5 ATR keeps 61%). The rule is not loosened: H4 is recorded as failing it, with this note.
+- **Dual Thrust: FAIL, flagged as curve-fit** (2 of 8). A trigger of 0.3 x the range lost in every run, 0.4 and 0.7 keep under a third, and 5 or 6 days keep under half. At all nine settings the 2023-24 median is negative: its profit is 2025-26 only.
+- **MOM_16: FAIL, flagged as curve-fit** (2 of 4). The signal an hour earlier or later loses money (15:00 -0.3 R, 17:00 -3.0 R) while 14:00 and 18:00 do as well or better. A result that flips sign from hour to hour is not an edge the neighbours share; 16:00 may be luck.
+- Not acted on. Nothing is retired or changed here; that is the owner's decision. The flags say where the book's research numbers deserve the least trust: Dual Thrust and MOM_16 first. The random-data test (queue item 3) is the next independent check on the same two. Full table: `data/reports/plateau_lab.txt`.
+
+## 38. Random-data test: the bars inside each day shuffled; tested, nothing changed (research queue item 3, 12 Nov 2026)
+
+`research/random_data_lab.js`, choices and pass rule fixed before the single run: inside each server day the 15-minute bars' moves are put in a random order, 200 times. Every fake day keeps the real day's open, close and set of bar sizes (times and spreads stay on the clock), so the daily chart is the real one and only the path inside the day is random. Each strategy alone in R, 2023-04-03 to 2026-10-08, the section 24 fills (real prices: 200 runs; each shuffle: one run); the strategies are built afresh on each fake series by `I.portfolio`, and H4 runs on 4-hour bars made from the fake M15 bars (from the real M15 file they give the H1 file's 222 trades exactly). p = the share of shuffles that beat the real prices' median R. Pass: p < 0.05.
+
+| Total R | Real: worst 5% / median / best 5% | Shuffled: 5% / median / 95% | p | p 2023-24 / 2025-26 | |
+|---|---:|---:|---:|---:|---|
+| H4 | 44.8 / 49.5 / 53.0 | 3.3 / 19.4 / 34.7 | 0.005 | 0.010 / 0.020 | PASS |
+| Asian Narrow | 0.2 / 7.2 / 13.9 | -50.7 / -26.3 / 1.0 | 0.015 | 0.000 / 0.430 | PASS |
+| Dual Thrust | 6.2 / 7.3 / 8.2 | -2.9 / 4.0 / 10.6 | **0.195** | 0.765 / 0.010 | FAIL |
+| R-Breaker | 8.9 / 10.5 / 11.4 | -6.2 / 3.9 / 16.2 | **0.175** | 0.305 / 0.210 | FAIL |
+| MOM_16 | 6.0 / 10.1 / 14.0 | -38.3 / -14.7 / 5.7 | 0.000 | 0.005 / 0.340 | PASS |
+| The five together (information) | 73.8 / 84.1 / 94.8 | -49.6 / -14.7 / 26.8 | 0.000 | 0.000 / 0.045 | |
+
+- **H4, Asian Narrow and MOM_16: PASS. Dual Thrust and R-Breaker: FAIL, flagged**: 39 and 35 of the 200 shuffles beat their real median. Both still made money on the fake days (median +4.0 R and +3.9 R): about half of their profit is the day's net move, which any path through that day gives a breakout rule.
+- **What the test can say.** The shuffle keeps each day's direction and size and destroys only the order of the bars. A pass means the real order adds profit; a fail means no such addition was measured, not that the strategy loses money. A reordering cannot keep the day's high and low: the fake range was the real one on average (median ratio 0.99) but within 10% on only 35% of days (5%-95%: 0.67 to 1.48).
+- **H4** was written down beforehand as the weak case (the shuffle leaves everything from one day to the next untouched) and is the clearest pass: with the same daily closes but random 4-hour bars it keeps 39% of its R.
+- **The passes of Asian Narrow and MOM_16 are easier than they look** (reading after the run; the rule is not changed). The shuffle moves New York-sized bars into the night, so a "quiet night" means something else (408 fake trades against 306), and with the close pinned a fake day's later move leans against its earlier one, which hurts any rule that bets the move so far continues (MOM_16's shuffled median is -14.7 R, not 0). They beat a random order, but part of that is the clock's known pattern of busy and quiet hours. Neither passes on 2025-26 alone (p 0.43 and 0.34).
+- **That tilt makes the two fails more telling.** Dual Thrust is now flagged by two independent tests (section 37 and this one); on 2023-24 it did worse than 77% of the shuffles. R-Breaker passed section 37 and fails here: its settings are stable, but its timing inside the day is not shown to add anything beyond the day's move.
+- Not acted on. Nothing is retired or changed; that is the owner's decision. Across sections 37 and 38: H4 is the best supported (a plateau but for one cell, and a clear pass here); Dual Thrust the least (fails both); MOM_16 and R-Breaker each pass one and fail the other; Asian Narrow passes both, thinly (section 30). Full table: `data/reports/random_data_lab.txt`.
+
+## 39. The fresh month and forward parity: checked, nothing changed (research queue item 4, 13 Nov 2026)
+
+`research/fresh_lab.js`, both checks and their rules fixed before the single run. Nothing is picked here; the fresh bars (9 Oct to 6 Nov 2026, section 27) were only run, not tuned on.
+
+**A. The book on the fresh month.** The book as it trades now (four intraday strategies + H4 with the trail, $50 a 1 R), trades entered from 9 Oct, the section 24 fills, 200 runs. The yardstick: every stretch of 21 trading days in 2023-04 to 2026-10-08, pooled over the runs. Rule: consistent if the fresh median is at or above the 5th percentile of those stretches. The 1,400 trades closed before 9 Oct are identical with and without the fresh bars.
+
+| 9 Oct - 6 Nov 2026, 21 trading days, 26 trades | Research costs | Random fills: worst 5% | median | best 5% |
+|---|---:|---:|---:|---:|
+| Total R | +7.8 | +7.3 | +7.5 | +7.8 |
+| Net on $10,000 at 0.5% | +$390 | +$366 | +$376 | +$391 |
+| Any 21 days of history, total R | | -9.0 (5%) | +2.4 | +10.1 (95%) |
+
+- **CONSISTENT.** The fresh month is above 85% of all 21-day stretches (87% of the 2025-26 ones) and positive in every run. Per strategy (median R): Dual Thrust +2.4 (6 trades), MOM_16 +2.1 (10), R-Breaker +1.9 (3), H4 +1.6 (4, one still open at the last bar), Asian Narrow -0.5 (3).
+- It proves little: 31% of history's 21-day stretches lose money and 26 trades cannot confirm an edge of 0.03 to 0.19 R a trade. It is one more month in which nothing broke, in a gold trend like 2025-26. Dual Thrust and MOM_16, the two flagged in sections 37 and 38, were the best two: a month does not lift those flags.
+
+**B. Forward parity with the live demo.** The research was run as each live build traded (before 30 Oct no take-profits or cap; from 30 Oct take-profits; from 4 Nov 17:26 the $150 cap; all six intraday strategies; H4 without the trail) at research costs, and matched to the live trades by strategy, side and entry bar. Rule: entry parity of 80% or more, and at least 20 live trades to judge. The live journals are in the MetaQuotes folder, which this run could not read, so the live trades are the ones the daily reviews of 6, 7 and 12 Nov copied from them: every trade entered from 30 Oct (13 trades).
+
+- **TOO FEW TO JUDGE: 71.4% (10 of 14) on 13 live trades.** Of the 10 identical entries 8 had the same exit reason and 2 could not be compared (open at the end of the bars); none differed.
+- **All four differences begin on 30 Oct**, the day the fixed-lot / take-profit build went on (the journal has an "auto trading disabled" error that day): R-Breaker entered live at 17:15 where the research entered at 16:45, NY ORB at 17:45 against 17:00, MOM_16's 16:00 short did not happen live (research: +1.5 R at its take-profit), and H4's short was entered live on 2 Nov 01:05 (-1.31 R) where the research entered on 30 Oct 16:00 (-0.72 R). From 3 Nov on, 8 of 8 entries are identical. Whether the EA was off between 16:00 and 17:15 on 30 Oct is in the journals, not in the reviews.
+- **Where it matched, it matched closely.** Live R was 0.06 lower than the research's on average (8 trades). Live fills were $0.22 worse than the research's fills on top of its $0.05 (9 intraday fills), about $0.27 against the $0.29 the fill model draws from; these are partly the same fills the model was built from, so it is no independent test. Dual Thrust's stop width on 4, 5 and 6 Nov: research $193.84, $195.38, $216.56; live $194.26, $195, $216.57, so the cap skipped the same days in both.
+- 12-16 Oct: the reviews give only a count, 10 live trades against 15 in the research; the EA was down for part of 14-15 Oct. Not matched trade by trade.
+- Still to do: `node research/fresh_lab.js --intraday <GoldIntraday_journal.csv> --h4 <DonchianGold_journal.csv>` reads the live journals and compares from 9 Oct (that reader has not run on a real live journal yet). Part A does not change. Real forward parity of the builds as they are now (1.08 / 1.17) needs them to trade: they have had 51 minutes of market time.
+- Not acted on. Nothing was built or changed.
+
+- **Run on the real journals (14 Nov 2026, `--intraday` / `--h4`).** 9 Oct to 6 Nov: live 23 trades, research 55; identical entry 17 (same exit 14, different 2, not comparable 1), same day at another bar 5, live only 1, research only 33: entry parity 30%, Rule B FAIL. The cause is running time, not the rules: the live journal has no rows at all on 17-28 Oct or 2-3 Nov (MT5 was closed), and 22 of the 23 live trades have a research partner. Of those, the 5 at another bar follow restarts in the middle of a day. Windows' event log for 7-13 Nov shows why the terminal keeps stopping: the PC sleeps for hours at a time, was restarted by Windows Update (12 Nov) and lost power twice (10 and 12 Nov), and MT5 was not started again afterwards. Matched trades: live R 0.13 lower than the research's on average (16 trades), live fills $0.17 worse (the research charges $0.05). The demo test cannot confirm or refute the research until the terminal runs through whole weeks: a startup shortcut for MT5 was added on 14 Nov; a PC that sleeps needs either its sleep turned off or a hosted Windows server.
