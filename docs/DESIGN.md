@@ -754,3 +754,9 @@ Bold = fails the rule.
 - Not acted on. Nothing was built or changed.
 
 - **Run on the real journals (14 Nov 2026, `--intraday` / `--h4`).** 9 Oct to 6 Nov: live 23 trades, research 55; identical entry 17 (same exit 14, different 2, not comparable 1), same day at another bar 5, live only 1, research only 33: entry parity 30%, Rule B FAIL. The cause is running time, not the rules: the live journal has no rows at all on 17-28 Oct or 2-3 Nov (MT5 was closed), and 22 of the 23 live trades have a research partner. Of those, the 5 at another bar follow restarts in the middle of a day. Windows' event log for 7-13 Nov shows why the terminal keeps stopping: the PC sleeps for hours at a time, was restarted by Windows Update (12 Nov) and lost power twice (10 and 12 Nov), and MT5 was not started again afterwards. Matched trades: live R 0.13 lower than the research's on average (16 trades), live fills $0.17 worse (the research charges $0.05). The demo test cannot confirm or refute the research until the terminal runs through whole weeks: a startup shortcut for MT5 was added on 14 Nov; a PC that sleeps needs either its sleep turned off or a hosted Windows server.
+
+## 40. A daily loss limit: tested, not built (14 Nov 2026)
+
+`research/daily_limit_lab.js`, rules fixed before running: once a server day's closed trades have lost 1, 1.5 or 2 R, no new entry that day. The book as it trades (four intraday + H4), realistic fills, 100 runs.
+
+- **FAIL.** No limit beat having none on 2023-24 (ratio 0.77 without; 0.51, 0.68, 0.66 with), so nothing was picked. On 2025-26 the limits changed little (2.73 without; 2.82, 2.70, 2.61). A loss earlier in the day does not predict the next trade, so a limit removes winners and losers alike; the book's drawdowns build over weeks, which the 15% account stop already covers.
