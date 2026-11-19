@@ -1404,6 +1404,8 @@ section('Gap signal and paper exits');
   ok(sig({}) === 'GAP BUY 10 sh at 110, stop 105 (gap 8%)', 'gap: 0.5% of $10,000 over a $5 stop = 10 shares');
   ok(sig({ gapPct: 5.9 }) === '' && sig({ price: 107.9 }) === '' && sig({ dvPrev: 49 }) === '' && sig({ mk: false }) === '', 'gap: no signal under 6%, a close under the open, under $50M, or SPY under its 200-day');
   ok(sig({ low: 101.9 }) === '', 'gap: no signal when the stop is over 2 ATR away');
+  ok(sig({ hist: 200 }) === '' && sig({ hist: 300, final: true }) !== '', 'gap: no signal with under a year of history, as in the study');
+  ok(sig({ final: false }) === '', 'gap: no signal from a US day that has not closed yet');
   ok(sig({ price: 1000, open: 990, low: 999 }) === 'GAP BUY 2 sh at 1000, stop 999 (gap 8%)', 'gap: a position is at most 20% of the account');
   const d0 = Date.UTC(2026, 0, 5), bars = [];
   for (let i = 0; i < 12; i++) bars.push({ t: d0 + (i - 8) * 86400000 + 75600000, c: 100 + i });

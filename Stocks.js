@@ -14,6 +14,11 @@
  * The list: tickers in column A of a tab named "Stock List" (header in row 1), if that tab exists; otherwise
  * STOCKS.defaults. Runs once a day after the US close (its timer installs itself from the morning timer, like the
  * watchdog, so a clasp push is enough), and from the menu: Stocks: refresh now.
+ * Parity check (19 Nov 2026): this file's code replayed day by day on the Yahoo files, 2017-2026, gave the same signals
+ * as research/gap_lab.js on 189 of 192; the differences were new listings (fixed: 252 days of history now required,
+ * as in the study) and 3 MU days where the $10,000 paper account cannot buy one share inside 0.5% risk (kept).
+ * A signal needs a finished US day (a refresh during US hours shows none), and Telegram gets each day's signals once
+ * (the daily timer also runs on weekends, when the last bar is still Friday's).
  */
 const STOCKS = {
   sheet: 'Stocks', listSheet: 'Stock List', hour: 6, minute: 30,     // script time zone; the US close is 05:00 in UTC+8 winter
@@ -61,8 +66,12 @@ function runStocks() {
     rows.forEach(r => { r.signal = stocksGapSignal_(r, marketOk, capital); });
     stocksWrite_(stocksRank_(rows), missing, marketOk);
     const text = stocksAlertText_(rows);
-    if (text) {                                    // tell the owner on Telegram (the chat the MT5 report uses)
-      try { const chat = telegramChatId_(); if (chat) telegramCall_('sendMessage', { chat_id: String(chat), text }); }
+    const day = text ? rows.filter(r => r.signal)[0].lastDay : '', props = PropertiesService.getScriptProperties();
+    if (text && props.getProperty('STOCKS_ALERT_DAY') !== day) {   // tell the owner on Telegram, once per US day
+      try {
+        const chat = telegramChatId_();
+        if (chat) { telegramCall_('sendMessage', { chat_id: String(chat), text }); props.setProperty('STOCKS_ALERT_DAY', day); }
+      }
       catch (e) { logLine_('ERROR', 'Stocks: Telegram: ' + e.message); }
     }
   } catch (e) {
@@ -117,6 +126,7 @@ function stocksRow_(ticker, bars) {
   let atrPrev = 0; for (let i = n - 15; i < n - 1; i++) atrPrev += trAt(i); atrPrev /= 14;   // ATR(14) to yesterday
   let dvPrev = 0; for (let i = n - 21; i < n - 1; i++) dvPrev += bars[i].c * bars[i].v; dvPrev /= 20e6;   // $M, to yesterday
   return {
+    hist: n, final: Date.now() >= last.t + 6.75 * 3600000,   // Yahoo stamps a day at the 09:30 New York open; closed 6.5 h later
     open: last.o, low: last.l, gapPct: (last.o / bars[n - 2].c - 1) * 100, atrPrev, dvPrev,
     ticker, price: c, day: (c / bars[n - 2].c - 1) * 100, dollarVol, atrPct: atr / c * 100, vs200,
     trend: vs200 === null ? '' : vs200 > 0 ? 'Up' : 'Down', r3: ret(63), r12: ret(252), fromHigh: (c / hi - 1) * 100,
@@ -141,7 +151,8 @@ function stocksMarketOk_(bars) {
 /** The gap rule on a row's last day: '' or the paper trade to place. Pure: tested in tests/run.js. */
 function stocksGapSignal_(r, marketOk, capital) {
   const g = STOCKS;
-  if (!marketOk || r.ticker === 'SPY' || !(r.gapPct >= g.gapPct) || !(r.price >= r.open) || !(r.dvPrev >= g.minDollarVolM)) return '';
+  if (!marketOk || r.ticker === 'SPY' || !(r.gapPct >= g.gapPct) || !(r.price >= r.open) || !(r.dvPrev >= g.minDollarVolM) ||
+      r.hist < 253 || r.final === false) return '';   // a year of history, as in the study; never a day still trading
   const risk = r.price - r.low;
   if (!(risk > 0) || risk > g.gapMaxAtr * r.atrPrev) return '';
   const shares = Math.floor(Math.min(capital * g.riskPct / 100 / risk, capital * 0.2 / r.price));
