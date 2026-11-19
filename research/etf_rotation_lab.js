@@ -27,6 +27,12 @@
  *   pass      judged once on 2013-01-01 to the end: the pick's MAR beats BH's AND its CAGR is at least 90% of BH's.
  *             A pass goes into the paper portfolio, not real money.
  *   also shown, deciding nothing: cash at 0%, costs x3, the decision day moved 0-20 trading days before month-end.
+ * Results (19 Nov 2026, one run; design 1999-12-31 to 2012-12-31 | test 2013-01-02 to 2026-11-18, CAGR / worst DD / MAR):
+ *   BH 1.6% / 55.2% / 0.03 | 14.2% / 33.7% / 0.42;  S1 7.7% / 17.3% / 0.45 | 9.3% / 24.4% / 0.38;
+ *   S2 3.6% / 28.6% / 0.12 | 13.4% / 30.2% / 0.44;  S3 6.9% / 20.7% / 0.33 | 9.3% / 22.1% / 0.42.
+ *   Picked S1 (the 200-day filter): test MAR 0.38 vs 0.42, CAGR 9.3% vs 14.2% -> FAIL. The filter halved the drawdown
+ *   in 2000-2012 but cost about 5% a year in 2013-2026, when dips recovered faster than the filter could get back in.
+ *   Moving the decision day changes S1's test MAR from 0.21 to 0.62: the monthly timing alone matters as much as the rule.
  * Research only: nothing here trades.
  */
 const fs = require('fs');

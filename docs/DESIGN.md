@@ -769,3 +769,31 @@ The book earns on trending, volatile days (section 22), so the owner approved a 
 - The script also printed each candidate's own 2025-26 medians for information (-5.8, -43.2, -48.4 R; no run above 0). Nothing was picked from them.
 - Reading: the Asian fade is a coin toss at 1 R that pays the spread; the band fades are wrong more often than right (39% wins). With sections 22 (RSI(2), Asian Bollinger fade) and 32 (1-hour range edges) that is six reversal rules failed on this broker's gold, three of them with a range-day filter. The efficiency ratio of the last 10 days says little about how the next day trades intraday.
 - Side finding, not acted on: on range days in 2023-24 the book itself made nothing at realistic fills (median +$29 on 382 trades, drawdown $1,274), while it made $1,440 over all days. Sitting out range days is a different question from this item (a filter on the book, not a new strategy) and would need its own pre-registered test; section 22 found the book still made 0.12 R a day on range days at research costs over 2023-26.
+
+## 42. Moving to US stocks and ETFs (owner, 19 Nov 2026)
+
+Owner: "we are carrying out long term investment, i dont think gold is suitable for our trading model, we should move to stocks". Then: paper first, US ETFs, Yahoo Finance approved as the data source, ETFs before single stocks, a stock watchlist in the Sheet focused on liquidity. Gold research stops; the two gold EAs keep running on the demo unchanged. `research/fetch_yahoo.js` downloads daily prices (with dividend-adjusted closes) to `data/yahoo/`.
+
+**Monthly trend rules on ETFs: FAIL.** `research/etf_rotation_lab.js`, rules fixed before the run, Yahoo adjusted closes, month-end decisions, 0.05% a switch, cash at the T-bill rate. Benchmark: hold SPY. S1 = SPY only above its 200-day average; S2 = the best 3 of the 9 sector SPDRs by 12-month return; S3 = S2 with the S1 switch. Picked on 2000-2012, judged on 2013-2026.
+
+| | 2000-2012 CAGR / worst DD | 2013-2026 CAGR / worst DD |
+|---|---|---|
+| Hold SPY | 1.6% / 55% | **14.2%** / 34% |
+| S1 200-day filter (picked) | 7.7% / 17% | 9.3% / 24% |
+| S2 sector rotation | 3.6% / 29% | 13.4% / 30% |
+| S3 both | 6.9% / 21% | 9.3% / 22% |
+
+- The 200-day filter halved the drawdowns in 2000-2012 and then cost about 5% a year in 2013-2026, when every dip (2018, 2020, 2022, 2025) recovered before the filter got back in. Moving the decision day by up to 20 trading days changes its MAR from 0.21 to 0.62, so the monthly timing is as large as the effect being measured.
+
+**Stock watchlist (Stocks.gs).** A daily Stocks tab from Yahoo prices for about 60 liquid US stocks and ETFs (or the tickers in a "Stock List" tab): 20-day average dollar volume (liquidity), ATR as % of price (how far it moves in a day), the 200-day average, 3- and 12-month returns, distance from the 52-week high. Monitoring only, no signals. Liquidity and volatility are ranked separately because they are different things: the most traded stocks (Apple, Microsoft) are among the calmer ones.
+
+## 43. A momentum swing strategy from the owner's videos: tested, not built (19 Nov 2026)
+
+Owner: "refer to the videos i sent you previously, all the stock trade entering strategy ... compile a suitable one". `research/stock_swing_lab.js`, rules fixed before the run, combining what the videos (section 33) teach for stocks: Kullamagi's market filter (SPY above its 200-day), trend template (close > 50-day > 200-day), relative strength (top 20% by 6-month return) and liquidity ($50M a day); two entries, Kullamagi's tight-range breakout (E1) and Martin Luk's pullback to the 21 EMA (E2; the MACD video is the same idea); two exits, Kullamagi's half out on day 3 and the rest on a close below the 10-day (X1), or all out on a close below the 20-day (X2). Risk 0.5% a trade, up to 10 positions, 49 large US stocks on Yahoo daily bars 2008-2026.
+
+Today's large stocks are the survivors, so any rule on them looks better than it would have in real time. The study therefore also ran each choice 100 times with random entries on the same stocks on the same days (same stop distance, exit and size). To pass, the pick had to beat SPY's MAR, beat 95% of the random runs, and reach a profit factor of 1.3 on 100+ trades in 2017-2026.
+
+- **FAIL.** Picked on 2008-2016: E1 X1 (MAR 0.51). On 2017-2026: 3.5% a year with a 7.3% worst drawdown (MAR 0.48 vs SPY 0.43), but random entries on the same stocks made 3.2% (95th percentile 4.3%) and the profit factor was 1.18. No choice beat its own random control.
+- The pullback entry (E2) did worse than buying the same stocks at random (3.3-6.4% vs 7.5-8.0% a year). Random buys made 7-8% a year on this list, which is the size of the survivorship bias.
+- The breakout (E1) is the better entry (PF 1.36-1.52), but at 0.5% risk with tight stops it holds little stock most of the time, so it earns 3-6% a year against 14% for simply holding SPY.
+- What it does not test: earnings gaps (Kullamagi's "episodic pivots") and the full US market including small fast stocks, which is where those traders make most of their money. Both need survivorship-free data with earnings dates (paid; not approved).

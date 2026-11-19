@@ -48,6 +48,16 @@
  *   pass      on the test half, all three: (1) MAR above SPY buy-and-hold's; (2) CAGR above the 95th percentile of its
  *             random-entry control; (3) profit factor at least 1.3 on at least 100 trades. A pass goes into the paper
  *             portfolio in the Sheet, not real money.
+ * Results (19 Nov 2026, one run, 100 random runs per choice; design | test, CAGR / worst DD / MAR / trades / PF):
+ *   SPY buy-and-hold 7.2% / 51.9% / 0.14 | 14.4% / 33.7% / 0.43.
+ *   E1 X1 2.2% / 4.3% / 0.51 / 316 / 1.40 | 3.5% / 7.3% / 0.48 / 394 / 1.18 (random p50 3.2%, p95 4.3%; picked)
+ *   E1 X2 4.0% / 10.8% / 0.37 / 265 / 1.52 | 5.8% / 13.8% / 0.42 / 340 / 1.36 (random 4.1%, 6.5%)
+ *   E2 X1 -2.5% / 32.7% / -0.08 / 1167 / 0.87 | 3.3% / 18.0% / 0.18 / 1563 / 1.03 (random 7.5%, 10.4%)
+ *   E2 X2 1.0% / 25.7% / 0.04 / 866 / 1.04 | 6.4% / 18.2% / 0.35 / 1165 / 1.14 (random 8.0%, 12.8%)
+ *   Picked E1 X1: test MAR beats SPY (0.48 vs 0.43), but CAGR 3.5% does not beat random entries on the same stocks
+ *   (p95 4.3%) and PF 1.18 < 1.3 -> FAIL. No choice beat its own random control on the test half. The pullback (E2)
+ *   did worse than random buys of the same names. Random entries made 7-8% a year on this list: that is the
+ *   survivorship bias, and why a backtest on today's winners must be judged against random entries.
  * Research only: nothing here trades.
  */
 const fs = require('fs');
