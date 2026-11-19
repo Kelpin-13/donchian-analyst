@@ -256,6 +256,8 @@ function onOpen() {
       .addItem('Morning map: send now', 'morningMapNow')
       .addItem('Morning map: stop', 'morningMapOff')
       .addSeparator()
+      .addItem('Stocks: refresh now', 'stocksNow')
+      .addSeparator()
       .addItem('Check installation', 'checkInstall')
       .addItem('Turn the old system back on', 'oldSystemOn')
       .addToUi();

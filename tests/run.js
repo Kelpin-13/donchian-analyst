@@ -1354,5 +1354,21 @@ if (ai !== -1) {
   ok(wNew.r === wOld.r && wNew.sheet === wOld.sheet, 'live walk-forward (BTC history) identical to ' + ref + ', every fold');
 }
 
+section('Stocks watchlist');
+{
+  const W = world({ markets: MARKETS, props: {} });
+  // 260 days: price rises 100 -> 359 by 1 a day, high = close + 1, low = close - 1, volume 1,000,000.
+  const bars = []; for (let i = 0; i < 260; i++) bars.push({ t: Date.UTC(2025, 0, 1) + i * 86400000, h: 101 + i, l: 99 + i, c: 100 + i, v: 1e6 });
+  W.ctx.__in = { bars, short: bars.slice(0, 20) };
+  const r = W.run("stocksRow_('TEST', __in.bars)");
+  ok(r && r.price === 359 && Math.abs(r.dollarVol - 349.5) < 1e-9, 'stocks: price and 20-day average dollar volume ($M)');
+  ok(Math.abs(r.atrPct - 2 / 359 * 100) < 1e-9, 'stocks: ATR 14 as % of price (true range 2 a day)');
+  ok(r.trend === 'Up' && Math.abs(r.vs200 - (359 / 259.5 - 1) * 100) < 1e-9, 'stocks: above the 200-day average is Up');
+  ok(Math.abs(r.r12 - (359 / 107 - 1) * 100) < 1e-9 && Math.abs(r.fromHigh - (359 / 360 - 1) * 100) < 1e-9, 'stocks: 12-month return and distance from the 52-week high');
+  ok(W.run("stocksRow_('X', __in.short)") === null, 'stocks: too little history gives no row');
+  const ranked = W.run("stocksRank_([{ticker:'A',dollarVol:5,atrPct:1},{ticker:'B',dollarVol:9,atrPct:3},{ticker:'C',dollarVol:1,atrPct:2}])");
+  ok(ranked.map(x => x.ticker).join('') === 'BAC' && ranked[0].liqRank === 1 && ranked[0].movesRank === 1 && ranked[2].movesRank === 2, 'stocks: sorted by liquidity, ranked by moves');
+}
+
 console.log('\n' + (failures ? failures + ' FAILED' : 'ALL PASSED'));
 process.exitCode = failures;
