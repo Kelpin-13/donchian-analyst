@@ -40,6 +40,11 @@
  *   test half: 3.6% a year, worst DD 2.6%, MAR 1.39 vs SPY 0.43; random p50 2.5%, p95 3.1%; PF 2.31 on 50 trades
  *   -> PASS (by the smallest margin on the trade count). Its design half lost (-0.2%, PF 0.24 on 18 trades): calmer
  *   stocks gap less, and 2008-2016 gave few trades on either list. Goes to the paper portfolio (Stocks.gs signal).
+ * Realism check (added 19 Nov 2026 after the two passes, fixed before it ran): the owner is asleep at the US close
+ *   (05:00 in Malaysia), so: --next-open buys at the NEXT day's open instead of the close, everything else unchanged
+ *   (same stop at the gap day's low, skipped if the open is at or under it; the day-3 half on the same calendar day;
+ *   the random control also buys at the next open). G6 on both lists. It passes only if both lists pass the same
+ *   three tests on the test half. node research/gap_lab.js 100 --next-open [--list B]
  * Research only: nothing here trades.
  */
 const fs = require('fs');
@@ -57,6 +62,7 @@ const LIST_B = ['ABT', 'ACN', 'AIG', 'AMGN', 'AXP', 'BK', 'BKNG', 'BLK', 'BMY', 
   'CVS', 'DE', 'DHR', 'DUK', 'EMR', 'FDX', 'GD', 'GILD', 'GM', 'HON', 'IBM', 'ISRG', 'LIN', 'LMT', 'LOW', 'MCD', 'MDLZ', 'MDT',
   'MET', 'MMM', 'MO', 'MS', 'NEE', 'NOW', 'PG', 'PM', 'RTX', 'SCHW', 'SO', 'SPG', 'TGT', 'TMO', 'TXN', 'UNP', 'UPS', 'USB'];
 const LIST = process.argv.includes('--list') && process.argv[process.argv.indexOf('--list') + 1] === 'B' ? 'B' : 'A';
+const OPEN = process.argv.includes('--next-open');
 const STOCKS = (LIST === 'B' ? LIST_B : LIST_A).filter(t => fs.existsSync(path.join(DIR, t + '.csv')));   // BK: Yahoo returns no data, skipped
 
 const read = t => fs.readFileSync(path.join(DIR, t + '.csv'), 'utf8').trim().split(/\r?\n/).slice(1).map(l => {
@@ -94,10 +100,26 @@ function run(G, plan, rand) {
   const pos = [], eq = [], trades = [], fills = new Map(), start = dates.findIndex(t => t >= FROM);
   const value = i => cash + pos.reduce((s, p) => s + p.sh * (S[p.k].c[i] !== null ? S[p.k].c[i] : p.last), 0);
   const sell = (p, sh, px) => { cash += sh * px * (1 - COST); p.pnl += sh * (px * (1 - COST) - p.cost); p.sh -= sh; };
+  let pending = [];
   for (let i = start; i < N; i++) {
     const yr = new Date(dates[i]).getUTCFullYear();
     cash *= 1 + (TBILL[yr] !== undefined ? TBILL[yr] : 3.8) / 100 / 252;
     const eqStart = value(i - 1);
+    if (OPEN) {                           // --next-open: yesterday's signals fill at today's open
+      for (const c of pending) {
+        const b = S[c.k].bars[i];
+        if (!b || pos.length >= MAX_POS || pos.some(p => p.k === c.k)) continue;
+        const px = b.o, risk = px - c.stop;
+        if (!(risk > 0)) continue;
+        const sh = Math.min(RISK * eqStart / risk, MAX_W * eqStart / px, cash / (px * (1 + COST)));
+        if (!(sh > 0)) continue;
+        cash -= sh * px * (1 + COST);
+        pos.push({ k: c.k, sh, cost: px * (1 + COST), entry: px, stop: c.stop, day: 0, half: false, pnl: 0, last: px, t: dates[i], exitNext: false });
+        if (!fills.has(c.dec)) fills.set(c.dec, []);
+        fills.get(c.dec).push({ atrK: risk / c.atr });
+      }
+      pending = [];
+    }
     for (const p of pos) {
       const s = S[p.k], b = s.bars[i];
       if (!b || !(p.sh > 0)) continue;
@@ -117,9 +139,15 @@ function run(G, plan, rand) {
         const pool = S.map((s, k) => k).filter(k => !held.has(k) && liquid(S[k], i - 1) && S[k].bars[i]);
         if (!pool.length) return;
         const k = pool[Math.floor(rand() * pool.length)]; held.add(k);
-        cands.push({ k, stop: S[k].bars[i].c - x.atrK * S[k].atr[i - 1], atr: S[k].atr[i - 1] });
+        cands.push({ k, stop: S[k].bars[i].c - x.atrK * S[k].atr[i - 1], atr: S[k].atr[i - 1], atrK: x.atrK });
       });
     } else cands = gaps(G, i).filter(c => !held.has(c.k));
+    if (OPEN) {
+      pending = cands.map(c => Object.assign({}, c, { dec: i }));
+      if (plan) pending.forEach(c => { const nb = S[c.k].bars[i + 1]; if (nb) c.stop = nb.o - c.atrK * c.atr; });   // same ATR distance from the fill
+      eq.push({ t: dates[i], v: value(i) });
+      continue;
+    }
     for (const c of cands) {
       if (pos.length >= MAX_POS) break;
       const px = S[c.k].bars[i].c, risk = px - c.stop;
@@ -148,7 +176,7 @@ const pct = (a, p) => { const s = a.slice().sort((x, y) => x - y); return s[Math
 
 const bhEq = dates.map((t, i) => ({ t, v: spyA[i] })).filter(p => p.t >= FROM);
 const bh = [stats(bhEq, [], FROM, SPLIT), stats(bhEq, [], SPLIT, Infinity)];
-console.log('Episodic pivot (gap up that holds) on ' + STOCKS.length + ' large US stocks (survivorship bias: judged against random entries)');
+console.log((OPEN ? '[entry at the NEXT open] ' : '') + 'Episodic pivot (gap up that holds) on ' + STOCKS.length + ' large US stocks (survivorship bias: judged against random entries)');
 console.log('  SPY buy-and-hold: design MAR ' + bh[0].mar.toFixed(2) + ' | test CAGR' + pc(bh[1].cagr) + ', worst DD' + pc(bh[1].dd) + ', MAR ' + bh[1].mar.toFixed(2));
 console.log('  choice | design: CAGR  worst DD   MAR  trades   PF  win% | test: CAGR  worst DD   MAR  trades   PF  win% | random test CAGR p50 / p95');
 const res = {};
@@ -159,7 +187,7 @@ const res = {};
   const row = z => pc(z.cagr).padStart(11) + pc(z.dd).padStart(10) + z.mar.toFixed(2).padStart(6) + String(z.n).padStart(8) + z.pf.toFixed(2).padStart(6) + (z.win * 100).toFixed(0).padStart(6);
   console.log('  ' + id.padEnd(6) + ' |' + row(a) + ' |' + row(b) + ' |' + pc(pct(rc, 50)) + ' /' + pc(pct(rc, 95)));
 });
-const pick = LIST === 'B' ? 'G6' : res.G10.a.mar > res.G6.a.mar ? 'G10' : 'G6', p = res[pick];   // list B: replication of the list A pick
+const pick = LIST === 'B' || OPEN ? 'G6' : res.G10.a.mar > res.G6.a.mar ? 'G10' : 'G6', p = res[pick];   // list B: replication of the list A pick
 const t1 = p.b.mar > bh[1].mar, t2 = p.b.cagr > pct(p.rc, 95), t3 = p.b.pf >= 1.3 && p.b.n >= 50;
 console.log((LIST === 'B' ? '  replication on list B, G6 as picked on list A' : '  picked on design: ' + pick) + ' -> test: (1) MAR ' + p.b.mar.toFixed(2) + ' vs SPY ' + bh[1].mar.toFixed(2) + (t1 ? ' ok' : ' NO') +
             '; (2) CAGR' + pc(p.b.cagr) + ' vs random p95' + pc(pct(p.rc, 95)) + (t2 ? ' ok' : ' NO') +
