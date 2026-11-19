@@ -50,6 +50,8 @@
  *   smallest margins (CAGR equal to the 95th percentile, one trade short of 50). Written rule: FAIL. Reading: the edge
  *   survives a next-morning entry on list A and weakens to borderline on list B; buying at the close stays the tested
  *   version, and the paper portfolio records it at the close.
+ * --export <file.json>: also writes the picked choice's daily equity, trades, SPY and the random control for
+ *   research/gap_report.js (the shareable report). Changes no result.
  * Research only: nothing here trades.
  */
 const fs = require('fs');
@@ -188,7 +190,7 @@ const res = {};
 [['G6', 0.06], ['G10', 0.10]].forEach(([id, G]) => {
   const r = run(G), a = stats(r.eq, r.trades, FROM, SPLIT), b = stats(r.eq, r.trades, SPLIT, Infinity), rc = [];
   for (let k = 0; k < RANDOM_RUNS; k++) { const q = run(G, r.fills, rng(9300 + k)); rc.push(stats(q.eq, q.trades, SPLIT, Infinity).cagr); }
-  res[id] = { a, b, rc };
+  res[id] = { a, b, rc, r };
   const row = z => pc(z.cagr).padStart(11) + pc(z.dd).padStart(10) + z.mar.toFixed(2).padStart(6) + String(z.n).padStart(8) + z.pf.toFixed(2).padStart(6) + (z.win * 100).toFixed(0).padStart(6);
   console.log('  ' + id.padEnd(6) + ' |' + row(a) + ' |' + row(b) + ' |' + pc(pct(rc, 50)) + ' /' + pc(pct(rc, 95)));
 });
@@ -197,3 +199,14 @@ const t1 = p.b.mar > bh[1].mar, t2 = p.b.cagr > pct(p.rc, 95), t3 = p.b.pf >= 1.
 console.log((LIST === 'B' ? '  replication on list B, G6 as picked on list A' : '  picked on design: ' + pick) + ' -> test: (1) MAR ' + p.b.mar.toFixed(2) + ' vs SPY ' + bh[1].mar.toFixed(2) + (t1 ? ' ok' : ' NO') +
             '; (2) CAGR' + pc(p.b.cagr) + ' vs random p95' + pc(pct(p.rc, 95)) + (t2 ? ' ok' : ' NO') +
             '; (3) PF ' + p.b.pf.toFixed(2) + ' on ' + p.b.n + ' trades' + (t3 ? ' ok' : ' NO') + ' -> ' + (t1 && t2 && t3 ? 'PASS (paper portfolio)' : 'FAIL'));
+const EXP = process.argv.indexOf('--export');
+if (EXP > 0) {
+  const day = t => new Date(t).toISOString().slice(0, 10);
+  fs.writeFileSync(process.argv[EXP + 1], JSON.stringify({
+    list: LIST, nextOpen: OPEN, stocks: STOCKS, pick, randomRuns: RANDOM_RUNS, split: day(SPLIT),
+    design: p.a, test: p.b, spy: bh, randomCagr: p.rc, pass: [t1, t2, t3],
+    eq: p.r.eq.map(x => [day(x.t), +x.v.toFixed(6)]), spyEq: bhEq.map(x => [day(x.t), +(x.v / bhEq[0].v).toFixed(6)]),
+    trades: p.r.trades.map(x => [day(x.t), S[x.k].tk, +x.pnl.toFixed(6)])
+  }));
+  console.log('  exported ' + process.argv[EXP + 1]);
+}

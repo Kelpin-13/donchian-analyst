@@ -1,0 +1,300 @@
+<title>Gap-Up Rule Backtest</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+/* Layout: a research note. One reading column, full-width charts, figures in mono, verdicts as pills. */
+:root {
+  --bg: #f6f7f9; --paper: #ffffff; --ink: #17202b; --muted: #5b6676; --rule: #dde2e9;
+  --strat: #0f6e7a; --strat2: #6aa8b0; --spy: #a1784a; --pass: #1d7a46; --pass-bg: #e3f3e9; --fail: #b3412e; --fail-bg: #fbe8e4;
+  --note-bg: #eef2f6;
+  --f-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f141a; --paper: #161d25; --ink: #e4e9ef; --muted: #98a3b1; --rule: #2a3440;
+  --strat: #4fc0cc; --strat2: #2f7f88; --spy: #d1a36f; --pass: #5fcf8d; --pass-bg: #163626; --fail: #f08a76; --fail-bg: #3a1d18;
+  --note-bg: #1b2430; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f141a; --paper: #161d25; --ink: #e4e9ef; --muted: #98a3b1; --rule: #2a3440;
+  --strat: #4fc0cc; --strat2: #2f7f88; --spy: #d1a36f; --pass: #5fcf8d; --pass-bg: #163626; --fail: #f08a76; --fail-bg: #3a1d18;
+  --note-bg: #1b2430; color-scheme: dark }
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--ink); font: 15.5px/1.6 var(--f-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 32px 64px }
+main { max-width: 960px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; line-height: 1.15 }
+h1 { font-size: clamp(30px, 5vw, 44px); font-weight: 700; letter-spacing: -0.01em }
+h2 { font-size: 22px; font-weight: 600 }
+h3 { font-size: 16px; font-weight: 600 }
+p { margin: 0; max-width: 68ch }
+.eyebrow { font: 500 12px/1 var(--f-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted) }
+.num, td.n, .mono { font-family: var(--f-mono); font-variant-numeric: tabular-nums }
+section { background: var(--paper); border: 1px solid var(--rule); border-radius: 6px; padding: 24px; display: flex; flex-direction: column; gap: 14px; min-width: 0 }
+header { display: flex; flex-direction: column; gap: 12px; padding-bottom: 4px }
+.meta { display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--muted); font-size: 13.5px }
+.pill { display: inline-flex; align-items: center; gap: 6px; font: 600 12px/1 var(--f-mono); letter-spacing: 0.04em; padding: 5px 9px; border-radius: 99px; white-space: nowrap }
+.pill.pass { color: var(--pass); background: var(--pass-bg) } .pill.fail { color: var(--fail); background: var(--fail-bg) }
+.pill.neutral { color: var(--muted); background: var(--note-bg) }
+.figs { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 6px; overflow: hidden }
+.fig { background: var(--paper); padding: 16px; display: flex; flex-direction: column; gap: 4px }
+.fig .v { font: 500 26px/1.1 var(--f-mono); font-variant-numeric: tabular-nums }
+.fig .l { font-size: 13px; color: var(--muted) }
+.fig .c { font: 12.5px/1.4 var(--f-mono); color: var(--muted) }
+.verdict { background: var(--note-bg); border-radius: 6px; padding: 16px 18px; display: flex; flex-direction: column; gap: 8px }
+.rules { display: grid; grid-template-columns: max-content 1fr; gap: 8px 18px; margin: 0 }
+.rules dt { font: 600 12px/1.7 var(--f-mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted) }
+.rules dd { margin: 0; min-width: 0 }
+.chart { width: 100%; min-width: 0 }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible }
+.chart text { font: 11.5px var(--f-mono); fill: var(--muted) }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted) }
+.legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px }
+.scroll { overflow-x: auto; min-width: 0 }
+table { border-collapse: collapse; width: 100%; font-size: 14px }
+th, td { padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--rule); white-space: nowrap }
+th { font: 600 11.5px/1.3 var(--f-mono); text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted) }
+td.n, th.n { text-align: right }
+td.pos { color: var(--pass) } td.neg { color: var(--fail) }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px }
+.two > * { min-width: 0 }
+ul { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; max-width: 72ch }
+.small { font-size: 13px; color: var(--muted) }
+footer { color: var(--muted); font-size: 12.5px; display: flex; flex-direction: column; gap: 8px; max-width: 80ch }
+@media (max-width: 520px) { section { padding: 18px } .rules { grid-template-columns: 1fr; gap: 2px } .rules dd { margin-bottom: 8px } }
+</style>
+
+<main>
+  <header>
+    <span class="eyebrow">Backtest report · US large-cap stocks · daily bars</span>
+    <h1>Gap-Up Rule Backtest</h1>
+    <p>A rule that buys a large US stock after it opens at least 6% higher and holds that gain all day, then exits within days to weeks. It was tested on two separate lists of stocks, with its rules fixed before each test.</p>
+    <div class="meta" id="meta"></div>
+  </header>
+
+  <section>
+    <h2>Summary</h2>
+    <div class="figs" id="figs"></div>
+    <div class="verdict" id="verdict"></div>
+  </section>
+
+  <section>
+    <h2>The rule</h2>
+    <dl class="rules">
+      <dt>Market</dt><dd>Only when the S&amp;P 500 (SPY) closed above its 200-day average the day before.</dd>
+      <dt>Stock</dt><dd>At least $50 million traded per day on average over 20 days, and at least one year of price history.</dd>
+      <dt>Signal</dt><dd>Today's open is at least 6% above yesterday's close, and today's close is at or above today's open. A gap this large in a large company usually follows news such as earnings or guidance.</dd>
+      <dt>Entry</dt><dd>Buy at today's close. The stop goes at today's low; skip the trade if that is more than 2 × the 14-day average daily range below the close.</dd>
+      <dt>Exit</dt><dd>Sell half at the close of the third day and move the stop to the entry price. Sell the rest at the next open after a close below the 10-day average. Stops fill at the stop or at the open if the day opens below it.</dd>
+      <dt>Size</dt><dd>0.5% of the account at risk per trade, at most 20% of the account in one stock, at most 10 positions, no borrowing. Idle cash earns the US Treasury bill rate.</dd>
+      <dt>Costs</dt><dd>0.05% per side on every buy and sell.</dd>
+    </dl>
+  </section>
+
+  <section>
+    <h2>Growth of $10,000</h2>
+    <p class="small">Log scale. The dashed line marks the start of the test period: rules and settings were chosen on data before it only.</p>
+    <div class="legend" id="leg1"></div>
+    <div class="chart" id="c-eq"></div>
+  </section>
+
+  <section>
+    <h2>Drawdown from the previous high</h2>
+    <div class="legend" id="leg2"></div>
+    <div class="chart" id="c-dd"></div>
+  </section>
+
+  <section>
+    <h2>Out-of-sample tests</h2>
+    <p>The pass rule was written before each test ran. It needs all three: better return per unit of drawdown than holding SPY; a higher annual return than 95% of 100 runs that buy random stocks from the same list on the same days with the same stops, exits and sizing; and a profit factor of at least 1.3 on at least 50 trades.</p>
+    <div class="scroll"><table id="t-tests"></table></div>
+    <p class="small" id="tests-note"></p>
+  </section>
+
+  <section>
+    <h2>Against random entries</h2>
+    <p>Our stock lists are today's large companies, so any rule that buys them looks good in hindsight (survivorship bias). The fair comparison is buying random stocks from the same list. Each bar counts the random runs that reached that annual return over the test period; the line is the rule.</p>
+    <div class="two">
+      <div><h3 id="h-ra"></h3><div class="chart" id="c-ra"></div></div>
+      <div><h3 id="h-rb"></h3><div class="chart" id="c-rb"></div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Calendar-year returns</h2>
+    <div class="scroll"><table id="t-years"></table></div>
+  </section>
+
+  <section>
+    <h2>Trades</h2>
+    <p class="small">R = profit or loss as a multiple of the amount risked (0.5% of the account). A trade that hits its first stop loses about 1 R.</p>
+    <div class="scroll"><table id="t-trades"></table></div>
+    <div class="two">
+      <div><h3>Trades per year, list A</h3><div class="chart" id="c-ty"></div></div>
+      <div><h3>Most recent trades, list A</h3><div class="scroll"><table id="t-recent"></table></div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Limits and risks</h2>
+    <ul id="limits"></ul>
+  </section>
+
+  <section>
+    <h2>How it was tested</h2>
+    <ul id="method"></ul>
+  </section>
+
+  <footer id="foot"></footer>
+</main>
+
+<script>
+const DATA = /*DATA*/null;
+const $ = id => document.getElementById(id);
+const pc = (v, d = 1) => (v * 100).toFixed(d) + '%';
+const sp = (v, d = 1) => (v >= 0 ? '+' : '') + (v * 100).toFixed(d) + '%';
+const usd = v => '$' + Math.round(v).toLocaleString('en-US');
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const A = DATA.A, B = DATA.B, S = DATA.spy;
+const testSpy = S.test, yr = s => s.slice(0, 4);
+
+$('meta').innerHTML = [
+  'Period ' + DATA.from + ' to ' + DATA.to, 'Design ' + yr(DATA.from) + '–2016 · Test 2017–' + yr(DATA.to),
+  'List A: ' + A.stocks + ' stocks · List B: ' + B.stocks + ' stocks', 'Built ' + DATA.built,
+  '<span class="pill neutral">PAPER TRADING · NOT LIVE</span>'].map(x => '<span>' + x + '</span>').join('');
+
+$('figs').innerHTML = [
+  [pc(A.test.cagr), 'Annual return, test period, list A', 'SPY ' + pc(testSpy.cagr)],
+  [pc(A.test.dd), 'Worst drawdown, test period', 'SPY ' + pc(testSpy.dd)],
+  [A.test.mar.toFixed(2), 'Return ÷ worst drawdown', 'SPY ' + testSpy.mar.toFixed(2)],
+  [A.test.pf.toFixed(2), 'Profit factor, ' + A.test.n + ' trades', 'win rate ' + pc(A.test.win, 0)],
+  [A.corr.toFixed(2), 'Correlation of daily returns with SPY', '1 = moves with the market']
+].map(([v, l, c]) => '<div class="fig"><span class="v">' + v + '</span><span class="l">' + l + '</span><span class="c">' + c + '</span></div>').join('');
+
+$('verdict').innerHTML =
+  '<h3>What the test shows</h3>' +
+  '<p>The rule passed its out-of-sample test on the list it was designed on and again on a second list of ' + B.stocks + ' stocks it had never seen. On both it beat 95% of random entries on the same stocks, with a worst drawdown under ' + pc(Math.max(A.test.dd, B.test.dd), 0) + '.</p>' +
+  '<p><b>It made far less money than holding the market:</b> ' + pc(A.cagr) + ' a year over ' + yr(DATA.from) + '–' + yr(DATA.to) + ' against ' + pc(S.cagr) + ' for SPY. It risks only 0.5% per trade and sits in cash most of the time. Its strengths are a small drawdown and returns that barely move with the market, so it is a possible small addition beside a market holding, not a replacement for one.</p>';
+
+// ---------- charts ----------
+function svgEl(w, h) { return '<svg viewBox="0 0 ' + w + ' ' + h + '" role="img">'; }
+function lineChart(el, sets, o) {
+  const box = $(el), W = Math.max(300, Math.min(box.clientWidth || 900, 960)), H = o.h || 300, L = 58, R = 12, T = 10, Bm = 26;
+  const all = sets.flatMap(s => s.pts.map(p => p[1])), t0 = Date.parse(sets[0].pts[0][0]), t1 = Date.parse(sets[0].pts[sets[0].pts.length - 1][0]);
+  const f = o.log ? Math.log : (v => v);
+  let lo = Math.min(...all), hi = Math.max(...all);
+  if (o.ticks) { lo = Math.min(lo, o.ticks[0]); hi = Math.max(hi, o.ticks[o.ticks.length - 1]); }
+  const x = t => L + (Date.parse(t) - t0) / (t1 - t0) * (W - L - R), y = v => T + (f(hi) - f(v)) / (f(hi) - f(lo)) * (H - T - Bm);
+  let g = svgEl(W, H);
+  (o.ticks || []).forEach(v => { g += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y(v) + '" y2="' + y(v) + '" stroke="' + css('--rule') + '"/><text x="' + (L - 6) + '" y="' + (y(v) + 4) + '" text-anchor="end">' + o.fmt(v) + '</text>'; });
+  for (let yv = +yr(sets[0].pts[0][0]) + 1; yv <= +yr(DATA.to); yv++) {
+    if (yv % (W < 600 ? 4 : 2)) continue;
+    const xx = x(yv + '-01-01'); g += '<text x="' + xx + '" y="' + (H - 6) + '" text-anchor="middle">' + yv + '</text>';
+  }
+  const xs = x(DATA.split); g += '<line x1="' + xs + '" x2="' + xs + '" y1="' + T + '" y2="' + (H - Bm) + '" stroke="' + css('--muted') + '" stroke-dasharray="4 4"/>' +
+    '<text x="' + (xs + 6) + '" y="' + (T + 12) + '" text-anchor="start">test period →</text>';
+  sets.forEach(s => {
+    const d = s.pts.map((p, i) => (i ? 'L' : 'M') + x(p[0]).toFixed(1) + ' ' + y(p[1]).toFixed(1)).join('');
+    if (s.area) g += '<path d="' + d + 'L' + x(s.pts[s.pts.length - 1][0]) + ' ' + y(0) + 'L' + L + ' ' + y(0) + 'Z" fill="' + s.color + '" fill-opacity="0.12" stroke="none"/>';
+    g += '<path d="' + d + '" fill="none" stroke="' + s.color + '" stroke-width="' + (s.w || 1.8) + '" stroke-linejoin="round"/>';
+    if (s.end) { const p = s.pts[s.pts.length - 1]; g += '<circle cx="' + x(p[0]) + '" cy="' + y(p[1]) + '" r="3.5" fill="' + s.color + '"/>'; }
+  });
+  box.innerHTML = g + '</svg>';
+}
+function legend(el, items) { $(el).innerHTML = items.map(([c, t]) => '<span><i style="background:' + c + '"></i>' + t + '</span>').join(''); }
+function histogram(el, vals, mark, p95) {
+  const box = $(el), W = Math.max(260, box.clientWidth || 440), H = 190, L = 30, R = 10, T = 18, Bm = 26;
+  const lo = Math.floor(Math.min(...vals, mark) * 200) / 200, hi = Math.ceil(Math.max(...vals, mark) * 200 + 0.001) / 200, step = 0.0025;
+  const bins = []; for (let b = lo; b < hi - 1e-9; b += step) bins.push({ b, n: 0 });
+  vals.forEach(v => { const i = Math.min(bins.length - 1, Math.floor((v - lo) / step)); bins[i].n++; });
+  const mx = Math.max(...bins.map(b => b.n)), x = v => L + (v - lo) / (hi - lo) * (W - L - R), y = n => T + (1 - n / mx) * (H - T - Bm);
+  let g = svgEl(W, H);
+  bins.forEach(b => { g += '<rect x="' + (x(b.b) + 1) + '" y="' + y(b.n) + '" width="' + Math.max(1, x(b.b + step) - x(b.b) - 2) + '" height="' + (H - Bm - y(b.n)) + '" fill="' + css('--spy') + '" fill-opacity="0.55"/>'; });
+  for (let v = Math.ceil(lo * 100) / 100; v <= hi + 1e-9; v += 0.01) g += '<text x="' + x(v) + '" y="' + (H - 6) + '" text-anchor="middle">' + pc(v, 0) + '</text>';
+  g += '<line x1="' + x(p95) + '" x2="' + x(p95) + '" y1="' + T + '" y2="' + (H - Bm) + '" stroke="' + css('--muted') + '" stroke-dasharray="3 3"/>' +
+       '<text x="' + (x(p95) - 4) + '" y="' + (T - 5) + '" text-anchor="end">95th pct ' + pc(p95) + '</text>';
+  g += '<line x1="' + x(mark) + '" x2="' + x(mark) + '" y1="' + (T - 4) + '" y2="' + (H - Bm) + '" stroke="' + css('--strat') + '" stroke-width="2.5"/>' +
+       '<text x="' + Math.min(x(mark) + 5, W - 4) + '" y="' + (T + 10) + '" text-anchor="' + (x(mark) > W - 80 ? 'end' : 'start') + '" style="fill:' + css('--strat') + '">rule ' + pc(mark) + '</text>';
+  box.innerHTML = g + '</svg>';
+}
+function bars(el, obj) {
+  const box = $(el), W = Math.max(260, box.clientWidth || 440), H = 170, L = 26, R = 6, T = 8, Bm = 24;
+  const ys = []; for (let v = +yr(DATA.from); v <= +yr(DATA.to); v++) ys.push(String(v));
+  const mx = Math.max(...ys.map(k => obj[k] || 0)), bw = (W - L - R) / ys.length;
+  let g = svgEl(W, H);
+  [0, Math.round(mx / 2), mx].forEach(v => { const yy = T + (1 - v / mx) * (H - T - Bm); g += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + yy + '" y2="' + yy + '" stroke="' + css('--rule') + '"/><text x="' + (L - 4) + '" y="' + (yy + 4) + '" text-anchor="end">' + v + '</text>'; });
+  ys.forEach((k, i) => {
+    const n = obj[k] || 0, h = n / mx * (H - T - Bm);
+    g += '<rect x="' + (L + i * bw + 1.5) + '" y="' + (H - Bm - h) + '" width="' + Math.max(1, bw - 3) + '" height="' + h + '" fill="' + css(k >= '2017' ? '--strat' : '--strat2') + '"/>';
+    if (i % 3 === 0) g += '<text x="' + (L + i * bw + bw / 2) + '" y="' + (H - 6) + '" text-anchor="middle">' + "'" + k.slice(2) + '</text>';
+  });
+  box.innerHTML = g + '</svg>';
+}
+function draw() {
+  const k = 10000, sc = pts => pts.map(p => [p[0], p[1] * k]);
+  legend('leg1', [[css('--strat'), 'Rule, list A'], [css('--strat2'), 'Rule, list B'], [css('--spy'), 'Hold SPY (dividends reinvested)']]);
+  lineChart('c-eq', [
+    { pts: sc(S.eq), color: css('--spy'), end: true }, { pts: sc(B.eq), color: css('--strat2'), end: true }, { pts: sc(A.eq), color: css('--strat'), w: 2.2, end: true }
+  ], { log: true, ticks: [5000, 10000, 20000, 40000, 80000], fmt: usd, h: 320 });
+  legend('leg2', [[css('--strat'), 'Rule, list A'], [css('--spy'), 'Hold SPY']]);
+  lineChart('c-dd', [{ pts: S.dd, color: css('--spy'), area: true, w: 1.2 }, { pts: A.dd, color: css('--strat'), area: true, w: 1.6 }],
+    { ticks: [-0.5, -0.4, -0.3, -0.2, -0.1, 0], fmt: v => pc(v, 0), h: 230 });
+  histogram('c-ra', A.random, A.test.cagr, A.p95); histogram('c-rb', B.random, B.test.cagr, B.p95);
+  bars('c-ty', A.trades.perYear);
+}
+$('h-ra').textContent = 'List A (' + A.stocks + ' stocks), 2017–' + yr(DATA.to);
+$('h-rb').textContent = 'List B (' + B.stocks + ' stocks), 2017–' + yr(DATA.to);
+
+// ---------- tables ----------
+const pill = ok => '<span class="pill ' + (ok ? 'pass">PASS' : 'fail">FAIL') + '</span>';
+const ok3 = p => p.every(Boolean);
+const tr = (name, t, p95, pass, note) => '<tr><td>' + name + '</td><td class="n">' + pc(t.cagr) + '</td><td class="n">' + pc(t.dd) + '</td><td class="n">' + t.mar.toFixed(2) +
+  '</td><td class="n">' + pc(p95) + '</td><td class="n">' + t.pf.toFixed(2) + '</td><td class="n">' + t.n + '</td><td>' + pill(ok3(pass)) + (note ? ' <span class="small">' + note + '</span>' : '') + '</td></tr>';
+$('t-tests').innerHTML = '<thead><tr><th>Test, 2017–' + yr(DATA.to) + '</th><th class="n">Annual</th><th class="n">Worst DD</th><th class="n">Ret ÷ DD</th><th class="n">Random 95th</th><th class="n">Profit factor</th><th class="n">Trades</th><th>Result</th></tr></thead><tbody>' +
+  '<tr><td>Hold SPY (benchmark)</td><td class="n">' + pc(testSpy.cagr) + '</td><td class="n">' + pc(testSpy.dd) + '</td><td class="n">' + testSpy.mar.toFixed(2) + '</td><td class="n">–</td><td class="n">–</td><td class="n">–</td><td></td></tr>' +
+  tr('List A, buy at the close', A.test, A.p95, A.pass) +
+  tr('List B, buy at the close (replication)', B.test, B.p95, B.pass) +
+  tr('List A, buy next morning', DATA.open.A.test, DATA.open.A.p95, DATA.open.A.pass) +
+  tr('List B, buy next morning', DATA.open.B.test, DATA.open.B.p95, DATA.open.B.pass, 'missed by the smallest margins') + '</tbody>';
+$('tests-note').textContent = 'The next-morning rows are a realism check: buying at the next day\'s open instead of the close, for anyone who cannot place an order just before the US close. It held on list A and fell just short on list B, so the tested version buys at the close.';
+
+const years = Object.keys(S.yearly).filter(y => y >= yr(DATA.from));
+const cell = v => v === undefined ? '<td class="n">–</td>' : '<td class="n ' + (v >= 0 ? 'pos' : 'neg') + '">' + sp(v) + '</td>';
+$('t-years').innerHTML = '<thead><tr><th></th>' + years.map(y => '<th class="n">' + y + (y === yr(DATA.to) ? '*' : '') + '</th>').join('') + '</tr></thead><tbody>' +
+  [['Rule, list A', A.yearly], ['Rule, list B', B.yearly], ['Hold SPY', S.yearly]].map(([n, o]) => '<tr><td>' + n + '</td>' + years.map(y => cell(o[y])).join('') + '</tr>').join('') +
+  '</tbody>';
+$('t-years').insertAdjacentHTML('afterend', '<p class="small">* ' + yr(DATA.to) + ' to ' + DATA.to + '. Losing years for the rule list A: ' + years.filter(y => A.yearly[y] < 0).length + ' of ' + years.length + '; for SPY: ' + years.filter(y => S.yearly[y] < 0).length + '.</p>');
+
+const trow = (n, t) => '<tr><td>' + n + '</td><td class="n">' + t.n + '</td><td class="n">' + t.names + '</td><td class="n">' + pc(t.win, 0) + '</td><td class="n">' + t.avgWin.toFixed(2) + ' R</td><td class="n">' + t.avgLoss.toFixed(2) + ' R</td><td class="n">' + t.avgR.toFixed(2) + ' R</td><td class="n">' + t.best.toFixed(1) + ' R</td><td class="n">' + t.worst.toFixed(1) + ' R</td></tr>';
+$('t-trades').innerHTML = '<thead><tr><th>' + yr(DATA.from) + '–' + yr(DATA.to) + '</th><th class="n">Trades</th><th class="n">Stocks</th><th class="n">Win rate</th><th class="n">Avg win</th><th class="n">Avg loss</th><th class="n">Avg trade</th><th class="n">Best</th><th class="n">Worst</th></tr></thead><tbody>' +
+  trow('List A', A.trades) + trow('List B', B.trades) + '</tbody>';
+$('t-recent').innerHTML = '<thead><tr><th>Entry</th><th>Stock</th><th class="n">Result</th></tr></thead><tbody>' +
+  A.trades.recent.map(([d, t, r]) => '<tr><td class="mono">' + d + '</td><td>' + t + '</td><td class="n ' + (r >= 0 ? 'pos' : 'neg') + '">' + (r >= 0 ? '+' : '') + r.toFixed(2) + ' R</td></tr>').join('') + '</tbody>';
+
+$('limits').innerHTML = [
+  '<b>Lower return than the market.</b> ' + pc(A.cagr) + ' a year against ' + pc(S.cagr) + ' for SPY over the full period. Anyone comparing it with an index fund should know this first.',
+  '<b>Survivorship bias.</b> Both lists are today\'s large companies; stocks that fell out of the index or went bankrupt are missing. The random-entry comparison corrects for this, but only within the same lists. A test on the whole historical market would need paid data.',
+  '<b>Many ideas were tested.</b> This rule is one of about two dozen ideas tried on this project. A pass can happen by luck when many ideas are tried; the second-list replication reduces that risk but does not remove it.',
+  '<b>Few trades in some years.</b> ' + A.trades.n + ' trades over ' + years.length + ' years on list A, and the early years gave few. In the design period (' + yr(DATA.from) + '–2016) list B lost money (' + pc(B.design.cagr) + ' a year on ' + B.design.n + ' trades).',
+  '<b>Concentration in time.</b> Trades cluster in strong markets (' + Object.entries(A.trades.perYear).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([y, n]) => y + ': ' + n).join(', ') + ' on list A). Long stretches pass without a signal.',
+  '<b>Entry timing.</b> The tested rule buys at the US close. Buying the next morning held on list A but missed on list B.',
+  '<b>Simulated, not traded.</b> Fills at the exact close and open, a flat 0.05% cost, and no taxes or currency conversion. Real results will differ. Paper trading began in November 2026.'
+].map(x => '<li>' + x + '</li>').join('');
+
+$('method').innerHTML = [
+  'Data: Yahoo Finance daily prices (split-adjusted; SPY benchmark with dividends reinvested), ' + DATA.from + ' to ' + DATA.to + '. List A: ' + DATA.listA.join(', ') + '. List B: ' + DATA.listB.join(', ') + '.',
+  'Rules were written and committed to version control before each run. Two gap sizes (6% and 10%) were compared on ' + yr(DATA.from) + '–2016 only; 6% was picked there and judged once on 2017 onwards.',
+  'The second list was added after the first pass, chosen by index membership rather than results, and run once with the 6% rule unchanged.',
+  'Random control: on every day the rule bought n stocks, 100 separate runs each bought n random stocks from the same list that met the same liquidity test, with the same stop distance in daily ranges, the same exits and the same sizing.',
+  'Nothing was changed after seeing the test results. Failed variants are reported here alongside the passes.'
+].map(x => '<li>' + x + '</li>').join('');
+
+$('foot').innerHTML = '<p><b>Hypothetical results.</b> Backtested performance is simulated with the benefit of hindsight and does not represent actual trading. Past performance does not guarantee future results. This report is research for discussion only and is not investment advice, a recommendation, or an offer to manage money or sell any security.</p>' +
+  '<p>Built ' + DATA.built + ' from the project\'s research scripts; every figure on this page is computed from the backtest output.</p>';
+
+draw();
+let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(draw, 150); });
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', draw);
+new MutationObserver(draw).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+</script>
