@@ -27,6 +27,15 @@
  *   pass      on 2017 to the end, all three: (1) MAR above SPY buy-and-hold's; (2) CAGR above the 95th percentile of
  *             its random control; (3) profit factor at least 1.3 on at least 50 trades. A pass goes to the paper
  *             portfolio, not real money.
+ * Results (19 Nov 2026, one run, 100 random runs; design | test, CAGR / worst DD / MAR / trades / PF):
+ *   SPY 14.4% / 33.7% / 0.43 on the test half.  G6 1.1% / 3.7% / 0.29 / 56 / 1.70 | 4.3% / 4.6% / 0.92 / 129 / 1.51
+ *   (random p50 2.5%, p95 3.6%; picked);  G10 0.4% / 2.0% / 0.17 / 17 / 1.25 | 3.2% / 3.2% / 1.02 / 37 / 1.75 (random 2.5%, 3.1%).
+ *   G6 PASSES all three. Caveats: it is in cash most of the time (about 13 trades a year at 0.5% risk), so it earns
+ *   4.3% a year against 14.4% for holding SPY: a small extra, not a replacement; and it is one pass among about two
+ *   dozen ideas tested, so luck is possible.
+ * Replication (added after that run, rules fixed before this part ran): the same G6 rule, unchanged, on a second list
+ *   of 52 large US stocks that were not in the first list (other S&P 100 members, chosen by membership, not by
+ *   results): node research/gap_lab.js 100 --list B. It passes only if, on the test half, the same three tests hold.
  * Research only: nothing here trades.
  */
 const fs = require('fs');
@@ -37,9 +46,14 @@ const DAY = 86400000, FROM = Date.UTC(2008, 0, 1), SPLIT = Date.UTC(2017, 0, 1);
 const COST = 0.0005, RISK = 0.005, MAX_POS = 10, MAX_W = 0.2, MIN_DV = 50e6, MAX_ATR = 2;
 const TBILL = { 2007: 4.36, 2008: 1.37, 2009: 0.15, 2010: 0.14, 2011: 0.05, 2012: 0.09, 2013: 0.06, 2014: 0.03, 2015: 0.05, 2016: 0.32,
                 2017: 0.93, 2018: 1.94, 2019: 2.06, 2020: 0.36, 2021: 0.05, 2022: 2.02, 2023: 5.07, 2024: 4.97, 2025: 4.2, 2026: 3.8 };
-const STOCKS = ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'GOOGL', 'META', 'TSLA', 'AVGO', 'AMD', 'NFLX', 'ORCL', 'CRM', 'ADBE', 'QCOM', 'MU',
+const LIST_A = ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'GOOGL', 'META', 'TSLA', 'AVGO', 'AMD', 'NFLX', 'ORCL', 'CRM', 'ADBE', 'QCOM', 'MU',
   'INTC', 'PLTR', 'UBER', 'COIN', 'JPM', 'BAC', 'WFC', 'GS', 'V', 'MA', 'PYPL', 'XOM', 'CVX', 'UNH', 'LLY', 'JNJ', 'PFE',
   'MRK', 'ABBV', 'KO', 'PEP', 'WMT', 'COST', 'HD', 'NKE', 'SBUX', 'DIS', 'BA', 'CAT', 'GE', 'F', 'T', 'VZ', 'BABA'];
+const LIST_B = ['ABT', 'ACN', 'AIG', 'AMGN', 'AXP', 'BK', 'BKNG', 'BLK', 'BMY', 'C', 'CHTR', 'CL', 'CMCSA', 'COF', 'COP', 'CSCO',
+  'CVS', 'DE', 'DHR', 'DUK', 'EMR', 'FDX', 'GD', 'GILD', 'GM', 'HON', 'IBM', 'ISRG', 'LIN', 'LMT', 'LOW', 'MCD', 'MDLZ', 'MDT',
+  'MET', 'MMM', 'MO', 'MS', 'NEE', 'NOW', 'PG', 'PM', 'RTX', 'SCHW', 'SO', 'SPG', 'TGT', 'TMO', 'TXN', 'UNP', 'UPS', 'USB'];
+const LIST = process.argv.includes('--list') && process.argv[process.argv.indexOf('--list') + 1] === 'B' ? 'B' : 'A';
+const STOCKS = LIST === 'B' ? LIST_B : LIST_A;
 
 const read = t => fs.readFileSync(path.join(DIR, t + '.csv'), 'utf8').trim().split(/\r?\n/).slice(1).map(l => {
   const p = l.split(','); return { t: Date.parse(p[0] + 'T00:00:00Z'), o: +p[1], h: +p[2], l: +p[3], c: +p[4], a: +p[5], v: +p[6] };
@@ -141,8 +155,8 @@ const res = {};
   const row = z => pc(z.cagr).padStart(11) + pc(z.dd).padStart(10) + z.mar.toFixed(2).padStart(6) + String(z.n).padStart(8) + z.pf.toFixed(2).padStart(6) + (z.win * 100).toFixed(0).padStart(6);
   console.log('  ' + id.padEnd(6) + ' |' + row(a) + ' |' + row(b) + ' |' + pc(pct(rc, 50)) + ' /' + pc(pct(rc, 95)));
 });
-const pick = res.G10.a.mar > res.G6.a.mar ? 'G10' : 'G6', p = res[pick];
+const pick = LIST === 'B' ? 'G6' : res.G10.a.mar > res.G6.a.mar ? 'G10' : 'G6', p = res[pick];   // list B: replication of the list A pick
 const t1 = p.b.mar > bh[1].mar, t2 = p.b.cagr > pct(p.rc, 95), t3 = p.b.pf >= 1.3 && p.b.n >= 50;
-console.log('  picked on design: ' + pick + ' -> test: (1) MAR ' + p.b.mar.toFixed(2) + ' vs SPY ' + bh[1].mar.toFixed(2) + (t1 ? ' ok' : ' NO') +
+console.log((LIST === 'B' ? '  replication on list B, G6 as picked on list A' : '  picked on design: ' + pick) + ' -> test: (1) MAR ' + p.b.mar.toFixed(2) + ' vs SPY ' + bh[1].mar.toFixed(2) + (t1 ? ' ok' : ' NO') +
             '; (2) CAGR' + pc(p.b.cagr) + ' vs random p95' + pc(pct(p.rc, 95)) + (t2 ? ' ok' : ' NO') +
             '; (3) PF ' + p.b.pf.toFixed(2) + ' on ' + p.b.n + ' trades' + (t3 ? ' ok' : ' NO') + ' -> ' + (t1 && t2 && t3 ? 'PASS (paper portfolio)' : 'FAIL'));
