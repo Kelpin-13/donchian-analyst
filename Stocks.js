@@ -44,6 +44,7 @@ function runStocks() {
   } catch (e) {
     logLine_('ERROR', 'Stocks: ' + e.message);
   }
+  if (ss_().getSheetByName(PAPER.sheet)) runPaper();   // Paper.gs: the paper portfolio, once the tab exists
 }
 function stocksNow() {
   runStocks();

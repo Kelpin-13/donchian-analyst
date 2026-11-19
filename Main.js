@@ -257,6 +257,7 @@ function onOpen() {
       .addItem('Morning map: stop', 'morningMapOff')
       .addSeparator()
       .addItem('Stocks: refresh now', 'stocksNow')
+      .addItem('Paper: update now (creates the Paper tab)', 'paperNow')
       .addSeparator()
       .addItem('Check installation', 'checkInstall')
       .addItem('Turn the old system back on', 'oldSystemOn')

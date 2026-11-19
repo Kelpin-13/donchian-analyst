@@ -1370,5 +1370,30 @@ section('Stocks watchlist');
   ok(ranked.map(x => x.ticker).join('') === 'BAC' && ranked[0].liqRank === 1 && ranked[0].movesRank === 1 && ranked[2].movesRank === 2, 'stocks: sorted by liquidity, ranked by moves');
 }
 
+section('Paper portfolio');
+{
+  const W = world({ markets: MARKETS, props: {} });
+  const d = (y, m, dd) => Date.UTC(y, m - 1, dd);
+  W.ctx.__in = {
+    rows: [
+      { row: 2, ticker: 'AAA', entryDate: d(2026, 1, 5), entry: 100, shares: 10, stop: 95, exitDate: null, exit: null },
+      { row: 3, ticker: 'BBB', entryDate: d(2026, 1, 6), entry: 50, shares: 40, stop: 40, exitDate: d(2026, 2, 1), exit: 60 },
+      { row: 4, ticker: 'CCC', entryDate: d(2026, 1, 7), entry: 20, shares: 50, stop: null, exitDate: null, exit: null }
+    ],
+    series: {
+      AAA: [{ t: d(2026, 1, 5) + 75600000, c: 100 }, { t: d(2026, 3, 2) + 75600000, c: 110 }],
+      CCC: [{ t: d(2026, 3, 2) + 75600000, c: 18 }],
+      SPY: [{ t: d(2026, 1, 2) + 75600000, c: 500 }, { t: d(2026, 1, 5) + 75600000, c: 500 }, { t: d(2026, 3, 2) + 75600000, c: 550 }]
+    }
+  };
+  const res = W.run('paperCalc_(__in.rows, __in.series, 10000)'), a = res.rows[2], b = res.rows[3], c = res.rows[4], m = res.summary;
+  ok(a.status === 'OPEN' && a.pnl === 100 && a.r === 2 && a.riskPct === 0.5 && a.warn.length === 0, 'paper: open trade P&L, R and risk at entry');
+  ok(b.status === 'CLOSED' && b.pnl === 400 && b.r === 1 && b.riskPct === 4 && b.warn.join().includes('risk over'), 'paper: closed trade, and a warning for risk over 1%');
+  ok(c.warn.join().includes('no stop') && c.pnl === -100, 'paper: a trade without a stop is flagged');
+  ok(m.equity === 10400 && m.closedPnl === 400 && m.openPnl === 0 && Math.abs(m.spy - 11000) < 1e-9, 'paper: equity, closed/open P&L and the SPY comparison from the first entry');
+  W.ctx.__in.series.AAA.push({ t: d(2026, 3, 3) + 75600000, c: 94 });
+  ok(W.run('paperCalc_(__in.rows, __in.series, 10000)').rows[2].warn.join().includes('under the stop'), 'paper: a close under the stop is flagged');
+}
+
 console.log('\n' + (failures ? failures + ' FAILED' : 'ALL PASSED'));
 process.exitCode = failures;
