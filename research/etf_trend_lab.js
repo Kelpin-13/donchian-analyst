@@ -27,6 +27,12 @@
  *   also shown, deciding nothing: cash at 0%, costs x3, and the decision day moved 1-20 trading days before month-end
  *             (the range of results shows how much the monthly timing alone matters); the largest daily moves of each
  *             file, to check the data for broker roll gaps.
+ * Results (19 Nov 2026, one run): FAIL, and it tells us little. OANDA's US100 history starts on 15 Sep 2014, so the
+ *   common start is 30 Sep 2015 and the design half is only 15 months (BH MAR 1.23, A 1.13, B 0.08, C 0.28; A picked,
+ *   does not beat BH -> FAIL). US100 also has a +45.1% "day" on 2021-01-04, a broker data break, which distorts B and C.
+ *   Test half for information: BH 15.0% / 34.3% DD; A 8.5% / 23.8%; B 12.3% / 23.3%; C 11.2% / 21.5%. Not re-run with
+ *   other settings (that would be choosing after seeing). research/etf_rotation_lab.js answers the same question on
+ *   real ETF prices from 1999 and is the result to use.
  * Research only: nothing here trades.
  */
 const fs = require('fs');

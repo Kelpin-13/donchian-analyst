@@ -785,6 +785,8 @@ Owner: "we are carrying out long term investment, i dont think gold is suitable 
 
 - The 200-day filter halved the drawdowns in 2000-2012 and then cost about 5% a year in 2013-2026, when every dip (2018, 2020, 2022, 2025) recovered before the filter got back in. Moving the decision day by up to 20 trading days changes its MAR from 0.21 to 0.62, so the monthly timing is as large as the effect being measured.
 
+**The same idea on OANDA's index CFDs: FAIL, uninformative.** `research/etf_trend_lab.js` (written before the export): OANDA's Nasdaq 100 history starts in Sep 2014, which left a 15-month design half, and it has a +45% one-day break on 4 Jan 2021. The 200-day rule was picked and did not beat holding the S&P 500 even there. On 2017-2026 holding made 15.0% a year, the 200-day rule 8.5%. Broker CFD history is not good enough for long-term stock tests; Yahoo's ETF prices are used from here on.
+
 **Stock watchlist (Stocks.gs).** A daily Stocks tab from Yahoo prices for about 60 liquid US stocks and ETFs (or the tickers in a "Stock List" tab): 20-day average dollar volume (liquidity), ATR as % of price (how far it moves in a day), the 200-day average, 3- and 12-month returns, distance from the 52-week high. Monitoring only, no signals. Liquidity and volatility are ranked separately because they are different things: the most traded stocks (Apple, Microsoft) are among the calmer ones.
 
 ## 43. A momentum swing strategy from the owner's videos: tested, not built (19 Nov 2026)
