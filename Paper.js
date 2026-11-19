@@ -92,6 +92,8 @@ function paperCalc_(rows, series, capital) {
         o.value = px * r.shares; openPnl += o.pnl;
         if (r.stop !== null && r.stop < r.entry) openRisk += Math.max(0, (px - r.stop) * r.shares);
         if (r.stop !== null && px <= r.stop) o.warn.push('closed under the stop: exit at the stop');
+        const hint = paperExitHint_(series[r.ticker], r.entryDate);
+        if (hint) o.warn.push(hint);
       }
     } else if (!closed) o.warn.push('no price for ' + r.ticker);
     out[r.row] = o;
@@ -100,6 +102,23 @@ function paperCalc_(rows, series, capital) {
   let spy = null;
   if (firstDay !== null) { const a = closeOn('SPY', firstDay), b = lastClose('SPY'); if (a && b) spy = capital * b / a; }
   return { rows: out, summary: { capital, equity, cash, openValue, openRisk, closedPnl, openPnl, spy, overdrawn: cash < -1e-9 } };
+}
+
+/**
+ * The gap rule's exits (research/gap_lab.js) for an open trade: day 3 after the entry day = sell half at that close and
+ * move the stop to the entry price; a close below the 10-day average = sell the rest at the next open.
+ */
+function paperExitHint_(bars, entryDay) {
+  if (!bars || !bars.length || entryDay === null) return '';
+  const day = b => Math.floor(b.t / 86400000) * 86400000, n = bars.length;
+  const after = bars.filter(b => day(b) > entryDay).length;
+  const hints = [];
+  if (after === 3) hints.push('rule: day 3, sell half at today\'s close and move the stop to the entry price');
+  if (after >= 1 && n >= 10) {
+    let s = 0; for (let i = n - 10; i < n; i++) s += bars[i].c;
+    if (bars[n - 1].c < s / 10) hints.push('rule: closed below the 10-day average, sell the rest at the next open');
+  }
+  return hints.join('; ');
 }
 
 function paperWrite_(s, rows, res) {

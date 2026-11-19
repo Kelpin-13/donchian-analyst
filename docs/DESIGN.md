@@ -799,3 +799,18 @@ Today's large stocks are the survivors, so any rule on them looks better than it
 - The pullback entry (E2) did worse than buying the same stocks at random (3.3-6.4% vs 7.5-8.0% a year). Random buys made 7-8% a year on this list, which is the size of the survivorship bias.
 - The breakout (E1) is the better entry (PF 1.36-1.52), but at 0.5% risk with tight stops it holds little stock most of the time, so it earns 3-6% a year against 14% for simply holding SPY.
 - What it does not test: earnings gaps (Kullamagi's "episodic pivots") and the full US market including small fast stocks, which is where those traders make most of their money. Both need survivorship-free data with earnings dates (paid; not approved).
+
+## 44. The gap-up ("episodic pivot") rule: passed, paper only (19 Nov 2026)
+
+The last stock entry from the owner's videos (Kullamagi). `research/gap_lab.js`, rules fixed before the run, same stocks, sizing, costs, split and random-entry control as section 43: a large stock opens at least 6% (G6) or 10% (G10) above yesterday's close and closes at or above its open; buy at the close, stop at the day's low (skipped if over 2 ATR), half out on day 3 with the stop to the entry, the rest on a close below the 10-day average; only while SPY is above its 200-day average.
+
+| | 2008-2016 | 2017-2026 | random entries 2017-2026 (median / 95th pct) |
+|---|---|---|---|
+| G6, list A (picked) | 1.1% a year, PF 1.70, 56 trades | **4.3% a year, worst DD 4.6%, PF 1.51, 129 trades** | 2.5% / 3.6% |
+| G10, list A | 0.4%, 17 trades | 3.2%, PF 1.75, 37 trades | 2.5% / 3.1% |
+| G6, list B (replication, 51 other large stocks) | -0.2%, PF 0.24, 18 trades | **3.6% a year, worst DD 2.6%, PF 2.31, 50 trades** | 2.5% / 3.1% |
+
+- **PASS on both lists**: better than SPY's return-to-drawdown, better than 95% of random entries on the same stocks, profit factor over 1.3. The replication list was fixed before it ran and the rule was not changed. It is the first stock rule here to beat its own random control; a large gap that holds into the close is news the market keeps pricing in for days, which fits the pattern that continuation rules work.
+- **What it is not**: a replacement for holding the market. It holds stock only a few weeks a year (about 18 trades a year over both lists at 0.5% risk), so it earns 3.6-4.3% a year against 14.4% for SPY. Its use is as a small extra on top, or a way to practise with tight risk.
+- **Caveats**: about 180 trades in 2017-2026 is a small sample; list B made money only after 2016; this is one pass among about two dozen ideas tested since October, so luck is possible. The test buys at the close; a real account would need a market-on-close order or a check that next-morning entries work as well (not tested).
+- **Built for paper only**: the Stocks tab scans about 110 stocks each morning and shows "GAP BUY n sh at price, stop" (0.5% of the $10,000 paper account); the Paper tab reminds when day 3 or the 10-day exit comes. No real money until it has also worked in paper trading.

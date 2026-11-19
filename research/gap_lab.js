@@ -36,6 +36,10 @@
  * Replication (added after that run, rules fixed before this part ran): the same G6 rule, unchanged, on a second list
  *   of 52 large US stocks that were not in the first list (other S&P 100 members, chosen by membership, not by
  *   results): node research/gap_lab.js 100 --list B. It passes only if, on the test half, the same three tests hold.
+ * Replication result (19 Nov 2026, one run; BK skipped, Yahoo returns no data for it, so 51 stocks): G6 on list B,
+ *   test half: 3.6% a year, worst DD 2.6%, MAR 1.39 vs SPY 0.43; random p50 2.5%, p95 3.1%; PF 2.31 on 50 trades
+ *   -> PASS (by the smallest margin on the trade count). Its design half lost (-0.2%, PF 0.24 on 18 trades): calmer
+ *   stocks gap less, and 2008-2016 gave few trades on either list. Goes to the paper portfolio (Stocks.gs signal).
  * Research only: nothing here trades.
  */
 const fs = require('fs');
@@ -53,7 +57,7 @@ const LIST_B = ['ABT', 'ACN', 'AIG', 'AMGN', 'AXP', 'BK', 'BKNG', 'BLK', 'BMY', 
   'CVS', 'DE', 'DHR', 'DUK', 'EMR', 'FDX', 'GD', 'GILD', 'GM', 'HON', 'IBM', 'ISRG', 'LIN', 'LMT', 'LOW', 'MCD', 'MDLZ', 'MDT',
   'MET', 'MMM', 'MO', 'MS', 'NEE', 'NOW', 'PG', 'PM', 'RTX', 'SCHW', 'SO', 'SPG', 'TGT', 'TMO', 'TXN', 'UNP', 'UPS', 'USB'];
 const LIST = process.argv.includes('--list') && process.argv[process.argv.indexOf('--list') + 1] === 'B' ? 'B' : 'A';
-const STOCKS = LIST === 'B' ? LIST_B : LIST_A;
+const STOCKS = (LIST === 'B' ? LIST_B : LIST_A).filter(t => fs.existsSync(path.join(DIR, t + '.csv')));   // BK: Yahoo returns no data, skipped
 
 const read = t => fs.readFileSync(path.join(DIR, t + '.csv'), 'utf8').trim().split(/\r?\n/).slice(1).map(l => {
   const p = l.split(','); return { t: Date.parse(p[0] + 'T00:00:00Z'), o: +p[1], h: +p[2], l: +p[3], c: +p[4], a: +p[5], v: +p[6] };

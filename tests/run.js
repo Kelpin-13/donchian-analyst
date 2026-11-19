@@ -1395,5 +1395,23 @@ section('Paper portfolio');
   ok(W.run('paperCalc_(__in.rows, __in.series, 10000)').rows[2].warn.join().includes('under the stop'), 'paper: a close under the stop is flagged');
 }
 
+section('Gap signal and paper exits');
+{
+  const W = world({ markets: MARKETS, props: {} });
+  const base = { ticker: 'XYZ', price: 110, open: 108, low: 105, gapPct: 8, atrPrev: 4, dvPrev: 200 };
+  W.ctx.__in = { base };
+  const sig = x => W.run('stocksGapSignal_(Object.assign({}, __in.base, ' + JSON.stringify(x) + '), ' + (x.mk === false ? 'false' : 'true') + ', 10000)');
+  ok(sig({}) === 'GAP BUY 10 sh at 110, stop 105 (gap 8%)', 'gap: 0.5% of $10,000 over a $5 stop = 10 shares');
+  ok(sig({ gapPct: 5.9 }) === '' && sig({ price: 107.9 }) === '' && sig({ dvPrev: 49 }) === '' && sig({ mk: false }) === '', 'gap: no signal under 6%, a close under the open, under $50M, or SPY under its 200-day');
+  ok(sig({ low: 101.9 }) === '', 'gap: no signal when the stop is over 2 ATR away');
+  ok(sig({ price: 1000, open: 990, low: 999 }) === 'GAP BUY 2 sh at 1000, stop 999 (gap 8%)', 'gap: a position is at most 20% of the account');
+  const d0 = Date.UTC(2026, 0, 5), bars = [];
+  for (let i = 0; i < 12; i++) bars.push({ t: d0 + (i - 8) * 86400000 + 75600000, c: 100 + i });
+  W.ctx.__in.bars = bars;
+  ok(W.run('paperExitHint_(__in.bars, ' + d0 + ')').includes('day 3, sell half'), 'paper: day 3 after the entry is flagged');
+  bars.push({ t: d0 + 4 * 86400000 + 75600000, c: 90 });
+  ok(W.run('paperExitHint_(__in.bars, ' + d0 + ')') === "rule: closed below the 10-day average, sell the rest at the next open", 'paper: a close below the 10-day average is flagged');
+}
+
 console.log('\n' + (failures ? failures + ' FAILED' : 'ALL PASSED'));
 process.exitCode = failures;
