@@ -1409,6 +1409,9 @@ section('Gap signal and paper exits');
   for (let i = 0; i < 12; i++) bars.push({ t: d0 + (i - 8) * 86400000 + 75600000, c: 100 + i });
   W.ctx.__in.bars = bars;
   ok(W.run('paperExitHint_(__in.bars, ' + d0 + ')').includes('day 3, sell half'), 'paper: day 3 after the entry is flagged');
+  ok(W.run("stocksAlertText_([{ticker:'A',signal:''}])") === '', 'gap: no Telegram message without a signal');
+  const msg = W.run("stocksAlertText_([{ticker:'XYZ',signal:'GAP BUY 10 sh at 110, stop 105 (gap 8%)',lastDay:'2026-11-19'},{ticker:'B',signal:''}])");
+  ok(msg.startsWith('Stocks, paper only: 1 gap signal (2026-11-19 US close)') && msg.includes('XYZ: GAP BUY 10 sh'), 'gap: the Telegram message lists the signals');
   bars.push({ t: d0 + 4 * 86400000 + 75600000, c: 90 });
   ok(W.run('paperExitHint_(__in.bars, ' + d0 + ')') === "rule: closed below the 10-day average, sell the rest at the next open", 'paper: a close below the 10-day average is flagged');
 }

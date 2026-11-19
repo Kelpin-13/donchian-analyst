@@ -45,6 +45,11 @@
  *   (same stop at the gap day's low, skipped if the open is at or under it; the day-3 half on the same calendar day;
  *   the random control also buys at the next open). G6 on both lists. It passes only if both lists pass the same
  *   three tests on the test half. node research/gap_lab.js 100 --next-open [--list B]
+ * Realism check result (19 Nov 2026, one run each): list A G6 at the next open: 4.3% a year, worst DD 3.0%, PF 1.60,
+ *   123 trades, random p95 3.5% -> passes. List B: 2.9% a year, PF 1.41, 49 trades, random p95 2.9% -> fails by the
+ *   smallest margins (CAGR equal to the 95th percentile, one trade short of 50). Written rule: FAIL. Reading: the edge
+ *   survives a next-morning entry on list A and weakens to borderline on list B; buying at the close stays the tested
+ *   version, and the paper portfolio records it at the close.
  * Research only: nothing here trades.
  */
 const fs = require('fs');

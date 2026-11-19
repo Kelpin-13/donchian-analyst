@@ -60,6 +60,11 @@ function runStocks() {
     const marketOk = stocksMarketOk_(spyBars), capital = typeof PAPER !== 'undefined' ? PAPER.capital : 10000;
     rows.forEach(r => { r.signal = stocksGapSignal_(r, marketOk, capital); });
     stocksWrite_(stocksRank_(rows), missing, marketOk);
+    const text = stocksAlertText_(rows);
+    if (text) {                                    // tell the owner on Telegram (the chat the MT5 report uses)
+      try { const chat = telegramChatId_(); if (chat) telegramCall_('sendMessage', { chat_id: String(chat), text }); }
+      catch (e) { logLine_('ERROR', 'Stocks: Telegram: ' + e.message); }
+    }
   } catch (e) {
     logLine_('ERROR', 'Stocks: ' + e.message);
   }
@@ -143,6 +148,15 @@ function stocksGapSignal_(r, marketOk, capital) {
   if (shares < 1) return '';
   return 'GAP BUY ' + shares + ' sh at ' + (Math.round(r.price * 100) / 100) + ', stop ' + (Math.round(r.low * 100) / 100) +
          ' (gap ' + (Math.round(r.gapPct * 10) / 10) + '%)';
+}
+
+/** The Telegram text for the day's gap signals, or '' when there are none. Pure: tested in tests/run.js. */
+function stocksAlertText_(rows) {
+  const s = rows.filter(r => r.signal);
+  if (!s.length) return '';
+  return 'Stocks, paper only: ' + s.length + ' gap signal' + (s.length > 1 ? 's' : '') + ' (' + s[0].lastDay + ' US close)\n' +
+         s.map(r => r.ticker + ': ' + r.signal).join('\n') +
+         '\nCopy into the Paper tab at that close price. Exits: half at the close of day 3, the rest after a close below the 10-day average.';
 }
 
 function stocksWrite_(rows, missing, marketOk) {
