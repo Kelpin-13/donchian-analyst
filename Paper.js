@@ -10,6 +10,9 @@
  * first entry would be worth. Status: OPEN or CLOSED. Warnings: no stop, risk over 1% of the account at entry, the
  * last close under the stop (the stop would have been hit: close it at the stop), more money in use than the account.
  * It places no orders anywhere.
+ * The 07:30 Telegram report (Watchdog.gs, gold demo) ends with a stocks section from this tab: equity vs the same money
+ * in SPY, open trades, and any rule reminder (owner, 19 Nov 2026: "run both stocks and gold"). Kept in Script
+ * Property PAPER_REPORT by runPaper, which runs after the Stocks tab at about 06:30.
  */
 const PAPER = {
   sheet: 'Paper', capital: 10000, maxRiskPct: 1,
@@ -37,6 +40,12 @@ function runPaper() {
     }))).forEach((r, k) => { try { if (r.getResponseCode() === 200) series[tickers[k]] = stocksBars_(JSON.parse(r.getContentText())); } catch (e) {} });
     const res = paperCalc_(rows, series, PAPER.capital);
     paperWrite_(s, rows, res);
+    const m = res.summary, actions = [];
+    rows.forEach(r => { const o = res.rows[r.row]; if (o && o.warn.length) actions.push(r.ticker + ': ' + o.warn.join('; ')); });
+    PropertiesService.getScriptProperties().setProperty('PAPER_REPORT', JSON.stringify({
+      at: Date.now(), capital: m.capital, equity: m.equity, spy: m.spy,
+      open: rows.filter(r => res.rows[r.row] && res.rows[r.row].status === 'OPEN').length,
+      trades: rows.length, actions: actions.slice(0, 8) }));
   } catch (e) {
     logLine_('ERROR', 'Paper: ' + e.message);
   }
@@ -140,4 +149,19 @@ function paperWrite_(s, rows, res) {
   ];
   s.getRange(1, col, lines.length, 2).setValues(lines);
   s.getRange(1, col).setFontWeight('bold');
+}
+
+/** The stocks section of the 07:30 report (HTML), or '' when the Paper tab has not run in the last 4 days. Pure. */
+function paperReportText_(st, now) {
+  if (!st || !st.at || now - st.at > 4 * 86400000) return '';
+  const esc = x => String(x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const usd = v => '$' + Math.round(v).toLocaleString('en-US');
+  if (!st.trades) return '<b>Stocks (paper)</b>\nNo trades yet: waiting for the first gap signal.';
+  const pct = (st.equity / st.capital - 1) * 100;
+  const lines = ['<b>Stocks (paper)</b>',
+    'Equity ' + usd(st.equity) + ' (' + (pct >= 0 ? '+' : '') + pct.toFixed(1) + '%)' +
+      (st.spy ? ', same money in SPY ' + usd(st.spy) + ' (' + (st.spy >= st.capital ? '+' : '') + ((st.spy / st.capital - 1) * 100).toFixed(1) + '%)' : ''),
+    'Open trades: ' + st.open];
+  (st.actions || []).forEach(a => lines.push('! ' + esc(a)));
+  return lines.join('\n');
 }

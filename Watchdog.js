@@ -162,7 +162,9 @@ function mt5DailyReportSend_(chat) {
   try { state = JSON.parse(PropertiesService.getScriptProperties().getProperty('WATCHDOG_STATE') || '{}'); } catch (e) {}
   const text = mt5DailyReportText_(Date.now(), mt5Status_(), mt5ReadLog_(), state);
   if (!text) { logLine_('INFO', 'MT5 daily report: no broker trading day yesterday, nothing sent'); return false; }
-  telegramCall_('sendMessage', { chat_id: chat, text: text, parse_mode: 'HTML', disable_web_page_preview: 'true' });
+  let stocks = '';                                     // Paper.gs: the stock paper account, so one message covers both
+  try { stocks = paperReportText_(JSON.parse(PropertiesService.getScriptProperties().getProperty('PAPER_REPORT') || 'null'), Date.now()); } catch (e) {}
+  telegramCall_('sendMessage', { chat_id: chat, text: stocks ? text + '\n\n' + stocks : text, parse_mode: 'HTML', disable_web_page_preview: 'true' });
   return true;
 }
 
