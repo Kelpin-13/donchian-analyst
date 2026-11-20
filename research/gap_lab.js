@@ -50,6 +50,17 @@
  *   smallest margins (CAGR equal to the 95th percentile, one trade short of 50). Written rule: FAIL. Reading: the edge
  *   survives a next-morning entry on list A and weakens to borderline on list B; buying at the close stays the tested
  *   version, and the paper portfolio records it at the close.
+ * OANDA retest (owner, 20 Nov 2026: "A, retest on the 33 stocks first"; fixed and committed before it runs): an MT5 robot on
+ *   the OANDA demo can only trade the US share CFDs that broker lists. 33 of its 36 are in lists A/B (all from list A):
+ *   AAPL AMZN BABA DIS F GE GOOGL META MSFT NFLX NVDA PFE TSLA T XOM ADBE AMD COIN COST CRM GS INTC JNJ JPM KO NKE ORCL
+ *   PLTR PYPL UBER SBUX V WMT (ABNB, SPCX and ANT are left out: too little history). --list OANDA --cfd runs the G6 rule
+ *   unchanged on those 33 with CFD costs: 0.10% a side instead of 0.05% (spread plus the robot buying a few minutes
+ *   before the close rather than at it), a daily financing charge on every open position of (T-bill rate + 3%) a year
+ *   (a CFD long pays interest on its full value; 3% is a typical broker mark-up, assumed, not read from OANDA), and no
+ *   interest on idle cash (CFD account cash earns nothing). Same random control (also charged), same split, nothing to
+ *   pick (G6 fixed). PASS only if, on 2017 to the end, the same three tests hold: MAR above SPY's, CAGR above the
+ *   random 95th percentile, PF at least 1.3 on at least 50 trades. A FAIL means no robot is built for this rule on OANDA.
+ *   For information only (not judged): the same 33 at share costs (--list OANDA without --cfd).
  * --export <file.json>: also writes the picked choice's daily equity, trades, SPY and the random control for
  *   research/gap_report.js (the shareable report). Changes no result.
  * Research only: nothing here trades.
@@ -59,7 +70,8 @@ const path = require('path');
 const DIR = path.join(__dirname, '..', 'data', 'yahoo');
 const RANDOM_RUNS = Number(process.argv[2]) || 100;
 const DAY = 86400000, FROM = Date.UTC(2008, 0, 1), SPLIT = Date.UTC(2017, 0, 1);
-const COST = 0.0005, RISK = 0.005, MAX_POS = 10, MAX_W = 0.2, MIN_DV = 50e6, MAX_ATR = 2;
+const CFD = process.argv.includes('--cfd'), FIN_MARKUP = 3;
+const COST = CFD ? 0.001 : 0.0005, RISK = 0.005, MAX_POS = 10, MAX_W = 0.2, MIN_DV = 50e6, MAX_ATR = 2;
 const TBILL = { 2007: 4.36, 2008: 1.37, 2009: 0.15, 2010: 0.14, 2011: 0.05, 2012: 0.09, 2013: 0.06, 2014: 0.03, 2015: 0.05, 2016: 0.32,
                 2017: 0.93, 2018: 1.94, 2019: 2.06, 2020: 0.36, 2021: 0.05, 2022: 2.02, 2023: 5.07, 2024: 4.97, 2025: 4.2, 2026: 3.8 };
 const LIST_A = ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'GOOGL', 'META', 'TSLA', 'AVGO', 'AMD', 'NFLX', 'ORCL', 'CRM', 'ADBE', 'QCOM', 'MU',
@@ -68,9 +80,12 @@ const LIST_A = ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'GOOGL', 'META', 'TSLA', 'AVGO',
 const LIST_B = ['ABT', 'ACN', 'AIG', 'AMGN', 'AXP', 'BK', 'BKNG', 'BLK', 'BMY', 'C', 'CHTR', 'CL', 'CMCSA', 'COF', 'COP', 'CSCO',
   'CVS', 'DE', 'DHR', 'DUK', 'EMR', 'FDX', 'GD', 'GILD', 'GM', 'HON', 'IBM', 'ISRG', 'LIN', 'LMT', 'LOW', 'MCD', 'MDLZ', 'MDT',
   'MET', 'MMM', 'MO', 'MS', 'NEE', 'NOW', 'PG', 'PM', 'RTX', 'SCHW', 'SO', 'SPG', 'TGT', 'TMO', 'TXN', 'UNP', 'UPS', 'USB'];
-const LIST = process.argv.includes('--list') && process.argv[process.argv.indexOf('--list') + 1] === 'B' ? 'B' : 'A';
+const LARG = process.argv.includes('--list') ? process.argv[process.argv.indexOf('--list') + 1] : 'A';
+const LIST = LARG === 'B' ? 'B' : LARG === 'OANDA' ? 'OANDA' : 'A';
+const LIST_OANDA = ['AAPL', 'AMZN', 'BABA', 'DIS', 'F', 'GE', 'GOOGL', 'META', 'MSFT', 'NFLX', 'NVDA', 'PFE', 'TSLA', 'T', 'XOM', 'ADBE', 'AMD',
+  'COIN', 'COST', 'CRM', 'GS', 'INTC', 'JNJ', 'JPM', 'KO', 'NKE', 'ORCL', 'PLTR', 'PYPL', 'UBER', 'SBUX', 'V', 'WMT'];
 const OPEN = process.argv.includes('--next-open');
-const STOCKS = (LIST === 'B' ? LIST_B : LIST_A).filter(t => fs.existsSync(path.join(DIR, t + '.csv')));   // BK: Yahoo returns no data, skipped
+const STOCKS = (LIST === 'B' ? LIST_B : LIST === 'OANDA' ? LIST_OANDA : LIST_A).filter(t => fs.existsSync(path.join(DIR, t + '.csv')));   // BK: Yahoo returns no data, skipped
 
 const read = t => fs.readFileSync(path.join(DIR, t + '.csv'), 'utf8').trim().split(/\r?\n/).slice(1).map(l => {
   const p = l.split(','); return { t: Date.parse(p[0] + 'T00:00:00Z'), o: +p[1], h: +p[2], l: +p[3], c: +p[4], a: +p[5], v: +p[6] };
@@ -110,7 +125,9 @@ function run(G, plan, rand) {
   let pending = [];
   for (let i = start; i < N; i++) {
     const yr = new Date(dates[i]).getUTCFullYear();
-    cash *= 1 + (TBILL[yr] !== undefined ? TBILL[yr] : 3.8) / 100 / 252;
+    const bill = TBILL[yr] !== undefined ? TBILL[yr] : 3.8;
+    if (!CFD) cash *= 1 + bill / 100 / 252;
+    else pos.forEach(q => { const f = q.sh * q.last * (bill + FIN_MARKUP) / 100 / 252; cash -= f; q.pnl -= f; });   // CFD financing
     const eqStart = value(i - 1);
     if (OPEN) {                           // --next-open: yesterday's signals fill at today's open
       for (const c of pending) {
@@ -194,9 +211,9 @@ const res = {};
   const row = z => pc(z.cagr).padStart(11) + pc(z.dd).padStart(10) + z.mar.toFixed(2).padStart(6) + String(z.n).padStart(8) + z.pf.toFixed(2).padStart(6) + (z.win * 100).toFixed(0).padStart(6);
   console.log('  ' + id.padEnd(6) + ' |' + row(a) + ' |' + row(b) + ' |' + pc(pct(rc, 50)) + ' /' + pc(pct(rc, 95)));
 });
-const pick = LIST === 'B' || OPEN ? 'G6' : res.G10.a.mar > res.G6.a.mar ? 'G10' : 'G6', p = res[pick];   // list B: replication of the list A pick
+const pick = LIST !== 'A' || OPEN ? 'G6' : res.G10.a.mar > res.G6.a.mar ? 'G10' : 'G6', p = res[pick];   // list B: replication of the list A pick
 const t1 = p.b.mar > bh[1].mar, t2 = p.b.cagr > pct(p.rc, 95), t3 = p.b.pf >= 1.3 && p.b.n >= 50;
-console.log((LIST === 'B' ? '  replication on list B, G6 as picked on list A' : '  picked on design: ' + pick) + ' -> test: (1) MAR ' + p.b.mar.toFixed(2) + ' vs SPY ' + bh[1].mar.toFixed(2) + (t1 ? ' ok' : ' NO') +
+console.log((LIST === 'OANDA' ? '  OANDA 33' + (CFD ? ' at CFD costs' : ' at share costs (information)') + ', G6 as picked on list A' : LIST === 'B' ? '  replication on list B, G6 as picked on list A' : '  picked on design: ' + pick) + ' -> test: (1) MAR ' + p.b.mar.toFixed(2) + ' vs SPY ' + bh[1].mar.toFixed(2) + (t1 ? ' ok' : ' NO') +
             '; (2) CAGR' + pc(p.b.cagr) + ' vs random p95' + pc(pct(p.rc, 95)) + (t2 ? ' ok' : ' NO') +
             '; (3) PF ' + p.b.pf.toFixed(2) + ' on ' + p.b.n + ' trades' + (t3 ? ' ok' : ' NO') + ' -> ' + (t1 && t2 && t3 ? 'PASS (paper portfolio)' : 'FAIL'));
 const EXP = process.argv.indexOf('--export');
