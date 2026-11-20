@@ -25,6 +25,7 @@ const MORNING_HOUR = 3600000, MORNING_H4 = 4 * 3600000;
 function runMorningMap() {
   try { watchdogEnsure_(); } catch (e) { logLine_('ERROR', 'Watchdog timer: ' + e.message); }   // Watchdog.gs: installs itself once
   try { stocksEnsure_(); } catch (e) { logLine_('ERROR', 'Stocks timer: ' + e.message); }       // Stocks.gs: installs itself once
+  try { alpacaEnsure_(); } catch (e) { logLine_('ERROR', 'Alpaca timer: ' + e.message); }       // Alpaca.gs: only while switched on
   const chat = telegramChatId_();
   if (!chat) { logLine_('WARN', 'Morning map: no Telegram chat connected'); return; }
   if (MORNING.send === 'report') {

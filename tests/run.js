@@ -1395,6 +1395,39 @@ section('Paper portfolio');
   ok(W.run('paperCalc_(__in.rows, __in.series, 10000)').rows[2].warn.join().includes('under the stop'), 'paper: a close under the stop is flagged');
 }
 
+section('Alpaca paper trading');
+{
+  const W = world({ markets: MARKETS, props: {} });
+  const ck = (open, ts, nc, no) => JSON.stringify({ is_open: open, timestamp: ts, next_close: nc, next_open: no });
+  const ph = (c, h, st) => W.run('alpacaPhase_(' + c + ', ' + h + ', ' + JSON.stringify(st || {}) + ')');
+  ok(ph(ck(true, '2026-11-20T15:40:00-05:00', '2026-11-20T16:00:00-05:00', '2026-11-23T09:30:00-05:00'), 15) === 'entry', 'alpaca: 20 minutes before the close is the entry window');
+  ok(ph(ck(true, '2026-11-20T15:52:00-05:00', '2026-11-20T16:00:00-05:00', '2026-11-23T09:30:00-05:00'), 15) === '', 'alpaca: none after the market-on-close cut-off');
+  ok(ph(ck(true, '2026-11-20T15:40:00-05:00', '2026-11-20T16:00:00-05:00', '2026-11-23T09:30:00-05:00'), 15, { entryDay: '2026-11-20' }) === '', 'alpaca: the entry runs once a day');
+  ok(ph(ck(true, '2026-11-27T12:45:00-05:00', '2026-11-27T13:00:00-05:00', '2026-11-30T09:30:00-05:00'), 12) === 'entry', 'alpaca: early-close days use the real close');
+  ok(ph(ck(false, '2026-11-23T09:15:00-05:00', '2026-11-23T16:00:00-05:00', '2026-11-23T09:30:00-05:00'), 9) === 'open', 'alpaca: 15 minutes before the open is the exit window');
+  ok(ph(ck(false, '2026-11-20T17:00:00-05:00', '2026-11-23T16:00:00-05:00', '2026-11-23T09:30:00-05:00'), 17) === 'evening', 'alpaca: after the close is the evening window');
+  const row = { ticker: 'XYZ', price: 110, open: 108, low: 105, gapPct: 8, atrPrev: 4, dvPrev: 200, hist: 400 };
+  W.ctx.__r = [row, Object.assign({}, row, { ticker: 'BIG', gapPct: 12 }), Object.assign({}, row, { ticker: 'NEW', hist: 100 }), Object.assign({}, row, { ticker: 'WEAK', price: 107 })];
+  const plan = W.run('alpacaEntryPlan_(__r, true, 100000, 100000, [])');
+  ok(plan.length === 2 && plan[0].symbol === 'BIG' && plan[0].qty === 100 && plan[0].stop === 105, 'alpaca: biggest gap first, 0.5% of $100,000 over a $5 stop = 100 shares; no young or faded stocks');
+  ok(W.run('alpacaEntryPlan_(__r, false, 100000, 100000, [])').length === 0 && W.run("alpacaEntryPlan_(__r, true, 100000, 100000, ['BIG'])").length === 1, 'alpaca: no buys under the market filter, none in a stock already held');
+  ok(W.run("alpacaEntryPlan_(__r, true, 100000, 100000, ['A','B','C','D','E','F','G','H','I'])").length === 1, 'alpaca: at most 10 positions');
+  const d = t => Date.UTC(2026, 10, t, 14, 30), bars = [];
+  for (let i = 1; i <= 20; i++) bars.push({ t: d(i), o: 100, h: 102, l: 98, c: 100 + i * 0.1 });
+  W.ctx.__b = bars;
+  ok(W.run("alpacaDaysSince_(__b, '2026-11-17')") === 3, 'alpaca: trading days after the entry day');
+  let e = W.run("alpacaEveningPlan_({ entryDay: '2026-11-20', stop: 99, half: false }, 101.5, __b, '2026-11-20')");
+  ok(e.stop === 98 && !e.exitNext, 'alpaca: the entry day sets the stop at the final low');
+  e = W.run("alpacaEveningPlan_({ entryDay: '2026-11-17', stop: 98, half: true }, 103, __b, '2026-11-20')");
+  ok(e.stop === 103 && e.exitNext, 'alpaca: after day 3 the stop is the entry price; one already above the close sells at the next open');
+  W.ctx.__b[19] = Object.assign({}, bars[19], { c: 99 });
+  ok(W.run("alpacaEveningPlan_({ entryDay: '2026-11-10', stop: 90, half: true }, 95, __b, '2026-11-20')").exitNext, 'alpaca: a close under the 10-day average sells at the next open');
+  W.props.ALPACA_KEY_ID = 'AKLIVE'; W.props.ALPACA_SECRET = 's';
+  let refused = false; try { W.run('alpacaKeys_()'); } catch (x) { refused = /not a paper key/.test(x.message); }
+  ok(refused, 'alpaca: live keys are refused');
+  ok(W.run('ALPACA.base') === 'https://paper-api.alpaca.markets', 'alpaca: the paper server only');
+}
+
 section('Gap signal and paper exits');
 {
   const W = world({ markets: MARKETS, props: {} });
