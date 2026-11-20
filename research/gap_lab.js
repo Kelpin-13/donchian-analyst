@@ -61,6 +61,11 @@
  *   pick (G6 fixed). PASS only if, on 2017 to the end, the same three tests hold: MAR above SPY's, CAGR above the
  *   random 95th percentile, PF at least 1.3 on at least 50 trades. A FAIL means no robot is built for this rule on OANDA.
  *   For information only (not judged): the same 33 at share costs (--list OANDA without --cfd).
+ * OANDA retest result (20 Nov 2026, one run): G6 on the 33 at CFD costs, test half: 1.5% a year, worst DD 4.2%, MAR 0.35
+ *   vs SPY 0.43 (NO); random p50 -0.3%, p95 0.8% (ok); PF 1.61 on 99 trades (ok) -> FAIL on test (1). No robot is built.
+ *   Reading: the edge over random entries survives on these 33 (and at share costs they pass easily: 4.3%, MAR 2.37,
+ *   PF 1.74); what sinks it is the CFD account: idle cash earning nothing and financing on every position take about
+ *   2.8% a year off both the rule and the random runs. Not re-run with other assumptions: that would be tuning.
  * --export <file.json>: also writes the picked choice's daily equity, trades, SPY and the random control for
  *   research/gap_report.js (the shareable report). Changes no result.
  * Research only: nothing here trades.
