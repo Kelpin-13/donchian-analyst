@@ -1,0 +1,171 @@
+<title>Gold Robots Backtest</title>
+<main>
+  <header>
+    <span class="eyebrow">Backtest report · Gold (XAU/USD) · two MT5 robots, five strategies</span>
+    <h1>Gold Robots Backtest</h1>
+    <p>A step-by-step test of the five gold strategies the two robots trade on a demo account. Each chapter answers one question, and its answer is the reason for the next chapter.</p>
+    <div class="meta" id="meta"></div>
+  </header>
+  <section>
+    <span class="eyebrow">The answer in short</span>
+    <div class="figs" id="figs"></div>
+    <div class="answer" id="answer"></div>
+    <h3>Chapters</h3>
+    <ol class="toc" id="toc"></ol>
+  </section>
+  <div id="chapters" style="display:flex;flex-direction:column;gap:22px"></div>
+  <footer id="foot"></footer>
+</main>
+<script>
+const DATA = /*DATA*/null;
+const B = DATA.base, Rr = DATA.rand, N = DATA.names, IDS = DATA.ids, G = DATA.gold, Lg = DATA.h4long, F = DATA.fresh;
+const ACC = 10000, END = yr(DATA.to);
+const yrsBook = ((Date.parse(DATA.to) - Date.parse(DATA.from)) / 31557600000);
+const R1 = v => (v >= 0 ? '+' : '') + v.toFixed(1) + ' R';
+
+$('meta').innerHTML = ['Book ' + DATA.from + ' to ' + DATA.to, 'H4 long test ' + Lg.from + ' to ' + Lg.to, 'Built ' + DATA.built, pill('neutral', 'DEMO ACCOUNT · NOT LIVE')].map(x => '<span>' + x + '</span>').join('');
+$('figs').innerHTML = [
+  [susd(Rr.net[1]), 'Profit on $10,000, realistic fills (median)', 'ideal fills ' + susd(B.all.net)],
+  [pc(Rr.dd[1]), 'Worst drop, realistic fills (median)', 'ideal fills ' + pc(B.all.dd)],
+  [Rr.stop15 + ' / ' + DATA.runs, 'Runs where the 15% account stop fires', 'it would have halted trading'],
+  [sp(G.book.ret, 0), 'Holding gold, same period', 'worst drop ' + pc(G.book.dd, 0)],
+  [R1(Lg.pre2023.r), 'H4 robot 2008–2022, never used for choices', 'profit factor ' + Lg.pre2023.pf.toFixed(2)]
+].map(([v, l, c]) => '<div class="fig"><span class="v">' + v + '</span><span class="l">' + l + '</span><span class="c">' + c + '</span></div>').join('');
+$('answer').innerHTML = '<p><b>The robots made money in every simulated run of ' + yr(DATA.from) + '–' + END + '</b>, including runs with realistic, random fills, and the held-out month since was profitable too. <b>Three findings limit that:</b> with realistic fills the worst drop is large enough to trip the 15% account stop in almost every run; the one strategy with long history (H4) lost money over 2008–2022, so the profit depends on the strong gold trend of 2024–26; and simply holding gold made more (' + sp(G.book.ret, 0) + ' against ' + sp(Rr.net[1] / ACC, 0) + '). The robots stay on a demo account.</p>';
+
+/* 1 */ chapter({ no: 1, title: 'The question', kind: 'question',
+  body: '<p>Two automated robots (Expert Advisors in MetaTrader 5) trade gold on a demo account, running five strategies between them. The question: <b>do these strategies make money after realistic trading costs, by more than luck or one lucky market phase would explain, and how do they compare with simply holding gold?</b></p>' +
+        '<p>Short-term strategies are easy to over-fit, and their profit is easily eaten by trading costs. Each chapter below checks one of those risks.</p>',
+  next: 'First the price data, and what it covers and does not.' });
+
+/* 2 */ chapter({ no: 2, title: 'The data', kind: 'setup',
+  body: '<dl class="rules"><dt>Prices</dt><dd>The broker\'s own gold bars, exported from MetaTrader 5: 15-minute and 1-hour bars from January 2023, with the spread of each bar. The tests start ' + DATA.from + ', after the indicators have warmed up.</dd>' +
+        '<dt>Long history</dt><dd>1-hour bars from 2008, used for the one strategy that runs on 4-hour bars (chapter 10). Their early years carry no spread.</dd>' +
+        '<dt>Held out</dt><dd>Bars from ' + F.from + ' onward were kept aside and never used for any choice (chapter 9).</dd>' +
+        '<dt>Real fills</dt><dd>The demo account\'s first 10 stop-order fills (slippage $0.02–$1.09, average $0.29 an ounce) and the economic calendar\'s US release times, used to make fills realistic (chapter 6).</dd></dl>' +
+        '<p><b>What it leaves out:</b> the 15-minute history starts in 2023, so four of the five strategies have been tested in only one phase of the gold market, a strong rise.</p>',
+  next: 'With the data in place, the strategies and their settings must be stated exactly.' });
+
+/* 3 */ chapter({ no: 3, title: 'The five strategies', kind: 'setup',
+  body: '<dl class="rules">' +
+        '<dt>H4 Donchian</dt><dd>4-hour trend breakout: buys a break of the 20-bar high in an uptrend (sells the low in a downtrend), stop 2 × the average range, trailing stop, exits on a 10-bar channel. Robot 1.</dd>' +
+        '<dt>Asian Narrow</dt><dd>When the overnight Asian range is unusually narrow, trades the breakout of that range. Robot 2.</dd>' +
+        '<dt>Dual Thrust</dt><dd>Breakout of the day\'s open by a fraction of recent daily ranges. Robot 2.</dd>' +
+        '<dt>R-Breaker</dt><dd>Breakout of levels computed from yesterday\'s high, low and close. Robot 2.</dd>' +
+        '<dt>Momentum 16:00</dt><dd>At 16:00 server time, trades in the direction gold moved earlier that day. Robot 2.</dd>' +
+        '<dt>Risk</dt><dd>0.5% of the account risked a trade ($50 on $10,000, not compounded in this report), a take-profit on every trade, no stop wider than $150 an ounce, and an account stop that halts all trading after a 15% fall from the peak.</dd>' +
+        '<dt>Settings</dt><dd>Chosen by hand on 2023–24 from short lists fixed in advance; the software\'s automatic optimiser was never used.</dd></dl>',
+  next: 'The settings were chosen on part of the data, so the test plan has to separate that part from the rest and add checks that choice cannot influence.' });
+
+/* 4 */ chapter({ no: 4, title: 'The test plan', kind: 'setup',
+  body: '<ol><li><b>Ideal costs:</b> the research\'s own costs (each bar\'s spread plus $0.05 a side).</li>' +
+        '<li><b>Realistic fills:</b> ' + DATA.runs + ' runs with random slippage drawn from the demo account\'s real fills.</li>' +
+        '<li><b>Design vs test:</b> 2023–24 (where settings were chosen) against ' + yr(DATA.split) + '–' + END + '.</li>' +
+        '<li><b>Each strategy\'s robustness:</b> nearby settings, and bars shuffled within each day.</li>' +
+        '<li><b>A held-out month</b> never used for anything.</li>' +
+        '<li><b>Long history:</b> the H4 strategy on 2008–2022.</li>' +
+        '<li><b>The live demo</b> against the research, trade by trade.</li>' +
+        '<li><b>The full picture</b> against holding gold.</li></ol>' +
+        '<p>Unlike the stock study, these checks were added one at a time over several weeks rather than planned in one go. Each check\'s own pass rule was written before it ran, and no result was used to change a setting.</p>',
+  next: 'Step one: the result with the research\'s ideal costs, as a starting point.' });
+
+/* 5 */ chapter({ no: 5, title: 'Step 1 · Ideal costs', kind: 'test', result: pill('pass', 'PROFIT'),
+  body: '<div class="figs">' + [[susd(B.all.net), 'Net on $10,000'], [pc(B.all.dd), 'Worst drop'], [B.all.n.toLocaleString('en-US'), 'Trades'], [B.all.pf.toFixed(2), 'Profit factor'], [pc(B.all.win, 0), 'Win rate'], [R1(B.all.avgR).replace(' R', ''), 'Average trade, R']]
+          .map(([v, l]) => '<div class="fig"><span class="v">' + v + '</span><span class="l">' + l + '</span></div>').join('') + '</div>' +
+        '<p>Over ' + yrsBook.toFixed(1) + ' years the book made ' + susd(B.all.net) + ' on $10,000 with a worst drop of ' + pc(B.all.dd) + '. The average trade earns about a tenth of what it risks, so small differences in fills matter a lot.</p>',
+  next: 'Ideal costs assume near-perfect fills. The demo account already slips about six times more, so the next step uses real slippage.' });
+
+/* 6 */ chapter({ no: 6, title: 'Step 2 · Realistic fills, ' + DATA.runs + ' runs', kind: 'test', result: pill('warn', 'PROFIT, BIG DROPS'),
+  body: '<p>Each entry and stop in each run drew its own extra slippage from the demo\'s 10 real fills, tripled within 30 minutes of a major US release; 2% of fills were also $3 late. Take-profits are limit orders and fill at their price.</p>' +
+        '<div class="legend" id="leg6"></div><div class="chart" id="c6"></div>' +
+        '<div class="scroll"><table><thead><tr><th></th><th class="n">Ideal</th><th class="n">Worst 5% of runs</th><th class="n">Median</th><th class="n">Best 5%</th></tr></thead><tbody>' +
+        '<tr><td>Net on $10,000</td><td class="n">' + susd(B.all.net) + '</td><td class="n">' + susd(Rr.net[0]) + '</td><td class="n">' + susd(Rr.net[1]) + '</td><td class="n">' + susd(Rr.net[2]) + '</td></tr>' +
+        '<tr><td>Worst drop</td><td class="n">' + pc(B.all.dd) + '</td><td class="n">' + pc(Rr.dd[2]) + '</td><td class="n">' + pc(Rr.dd[1]) + '</td><td class="n">' + pc(Rr.dd[0]) + '</td></tr></tbody></table></div>' +
+        '<p>Every run made money (' + (DATA.runs - Rr.losing) + ' of ' + DATA.runs + '), but realistic fills cut the profit by nearly half and doubled the worst drop. <b>The 15% account stop would have fired in ' + Rr.stop15 + ' of ' + DATA.runs + ' runs</b>, halting the robots until restarted by hand. Sizing by risk puts more ounces on tight stops, so each dollar of slippage costs more.</p>',
+  next: 'The profit holds with real fills. But the settings were chosen on 2023–24, so the next step asks whether the later, unseen years held up too.' });
+
+/* 7 */ chapter({ no: 7, title: 'Step 3 · Design years vs later years', kind: 'test', result: pill('pass', 'BOTH PROFIT'),
+  body: '<div class="scroll"><table><thead><tr><th>Realistic fills, median run</th><th class="n">Net on $10,000</th><th class="n">Worst drop</th><th class="n">Ideal-cost trades</th><th class="n">Ideal-cost profit factor</th></tr></thead><tbody>' +
+        '<tr><td>' + yr(DATA.from) + '–2024 (settings chosen here)</td><td class="n">' + susd(Rr.a[1]) + '</td><td class="n">' + pc(Rr.aDd) + '</td><td class="n">' + B.a.n + '</td><td class="n">' + B.a.pf.toFixed(2) + '</td></tr>' +
+        '<tr><td>' + yr(DATA.split) + '–' + END + ' (judged)</td><td class="n">' + susd(Rr.b[1]) + '</td><td class="n">' + pc(Rr.bDd) + '</td><td class="n">' + B.b.n + '</td><td class="n">' + B.b.pf.toFixed(2) + '</td></tr></tbody></table></div>' +
+        '<p>The later years were better than the years the settings came from, which argues against simple over-fitting. But many later checks also looked at ' + yr(DATA.split) + '–' + END + ', so it is no longer fully unseen.</p>',
+  next: 'A good total can hide weak parts. Next, each strategy on its own.' });
+
+/* 8 */ const ROB = { H4: ['fail', 'one of 16 neighbours', 'pass', 'p = 0.005'], ASIAN_NARROW: ['pass', '', 'pass', 'p = 0.015, thin'], DUAL_THRUST: ['fail', 'curve-fit', 'fail', 'p = 0.195'], R_BREAKER: ['pass', '', 'fail', 'p = 0.175'], MOM_16: ['fail', 'curve-fit', 'pass', 'p < 0.005'] };
+chapter({ no: 8, title: 'Step 4 · Each strategy on its own', kind: 'test', result: pill('warn', '1 OF 5 PASSES BOTH'),
+  body: '<div class="scroll"><table><thead><tr><th>Strategy</th><th class="n">Median R</th><th class="n">Worst 5% R</th><th class="n">Runs below 0</th><th class="n">Trades</th><th class="n">Win rate</th><th>Nearby settings</th><th>Shuffled bars</th></tr></thead><tbody>' +
+        IDS.map(id => { const r = Rr.per[id], o = ROB[id]; return '<tr><td>' + N[id] + '</td><td class="n">' + R1(r.med) + '</td><td class="n">' + R1(r.p5) + '</td><td class="n">' + r.below + ' / ' + DATA.runs + '</td><td class="n">' + r.n + '</td><td class="n">' + pc(r.win, 0) + '</td><td>' + PF(o[0] === 'pass') + (o[1] ? ' <span class="small">' + o[1] + '</span>' : '') + '</td><td>' + PF(o[2] === 'pass') + ' <span class="small">' + o[3] + '</span></td></tr>'; }).join('') +
+        '</tbody></table></div>' +
+        '<p><b>R</b> = profit as a multiple of the amount risked, realistic fills. <b>Nearby settings</b>: each main setting moved one and two steps either way; a pass needs every neighbour to keep at least 60% of the profit, which a real edge should do. <b>Shuffled bars</b>: the 15-minute bars inside each day put in random order 200 times, keeping each day\'s open and close; a pass needs the real prices to beat 95% of the shuffles, showing the timing inside the day adds something.</p>' +
+        '<p>H4 carries most of the profit and is the best supported (it missed the nearby-settings rule by one cell of 16). <b>Dual Thrust failed both checks</b> and is the least trustworthy. Asian Narrow passed both, but thinly. Nothing was changed after these checks; whether to drop a strategy is a decision for the owner.</p>' +
+        '<p class="small">Source of the two right-hand columns: the project\'s neighbouring-settings and shuffled-bars studies (12 Nov 2026), on the same period.</p>',
+  next: 'All of this used the same ' + yrsBook.toFixed(1) + ' years. The cleanest check is a period no one looked at.' });
+
+/* 9 */ chapter({ no: 9, title: 'Step 5 · The held-out month', kind: 'test', result: pill('pass', 'CONSISTENT'),
+  body: '<p>' + F.from + ' to ' + F.to + ': bars kept aside and run once, with the same settings and the same fill model.</p>' +
+        '<div class="scroll"><table><thead><tr><th>Held-out month</th><th class="n">Ideal</th><th class="n">Worst 5% of runs</th><th class="n">Median</th><th class="n">Best 5%</th></tr></thead><tbody>' +
+        '<tr><td>Total R (' + F.base.n + ' trades)</td><td class="n">' + R1(F.base.r) + '</td><td class="n">' + R1(F.rand[0]) + '</td><td class="n">' + R1(F.rand[1]) + '</td><td class="n">' + R1(F.rand[2]) + '</td></tr>' +
+        '<tr><td>On $10,000</td><td class="n">' + susd(F.base.r * 50) + '</td><td class="n">' + susd(F.rand[0] * 50) + '</td><td class="n">' + susd(F.rand[1] * 50) + '</td><td class="n">' + susd(F.rand[2] * 50) + '</td></tr></tbody></table></div>' +
+        '<p>Profitable in every run and better than most months in the history. One month of ' + F.base.n + ' trades proves little: about three in ten 21-day stretches of the history lost money, and this month was again a gold uptrend.</p>',
+  next: 'Every test so far comes from one market phase, gold\'s rise since 2023. Only H4 can be tested further back.' });
+
+/* 10 */ chapter({ no: 10, title: 'Step 6 · H4 over 2008–2022', kind: 'test', result: PF(Lg.pre2023.r > 0),
+  body: '<p>The H4 strategy, with its settings unchanged, on 1-hour bars back to 2008. These 15 years played no part in choosing its settings. Slippage of $0.50 a side is added because the early bars carry no spread.</p>' +
+        '<div class="chart" id="c10"></div>' +
+        '<div class="scroll"><table><thead><tr><th>H4, +$0.50 a side</th><th class="n">Total R</th><th class="n">Trades</th><th class="n">Profit factor</th><th class="n">Win rate</th><th class="n">Worst drop</th></tr></thead><tbody>' +
+        '<tr><td>' + yr(Lg.from) + '–2022</td><td class="n">' + R1(Lg.pre2023.r) + '</td><td class="n">' + Lg.pre2023.n + '</td><td class="n">' + Lg.pre2023.pf.toFixed(2) + '</td><td class="n">' + pc(Lg.pre2023.win, 0) + '</td><td class="n">' + pc(Lg.pre2023.dd) + '</td></tr>' +
+        '<tr><td>2023–' + yr(Lg.to) + '</td><td class="n">' + R1(Lg.post.r) + '</td><td class="n">' + Lg.post.n + '</td><td class="n">' + Lg.post.pf.toFixed(2) + '</td><td class="n">' + pc(Lg.post.win, 0) + '</td><td class="n">' + pc(Lg.post.dd) + '</td></tr></tbody></table></div>' +
+        '<p><b>Over 2008–2022 the strategy lost money</b>, with losing years in most of the sideways period from 2012 to 2022. Its profit comes from the trending years, 2008-2011 and 2023 onward. A trend strategy behaving this way is expected, but it means recent results overstate what to expect over a full cycle.</p>',
+  next: 'The research says what should happen. The demo account shows what does happen when the robots run.' });
+
+/* 11 */ chapter({ no: 11, title: 'Step 7 · The live demo', kind: 'test', result: pill('neutral', 'TOO FEW TRADES'),
+  body: '<p>The robots\' demo trades from 9 October to 6 November 2026 were matched with the research, trade by trade.</p>' +
+        '<ul><li><b>Only 23 live trades against 55 in the research.</b> The computer slept, restarted for updates and lost power, and MetaTrader was off for days at a time. Of the 23 live trades, 22 had a research partner.</li>' +
+        '<li><b>Where both traded, they matched closely:</b> the live result was 0.13 R a trade lower on average (16 trades), and live fills were $0.17 an ounce worse.</li>' +
+        '<li>That gap is close to what chapter 6 assumed, but far too few trades to judge.</li></ul>' +
+        '<p class="small">Source: the project\'s forward-parity check of 14 Nov 2026, on the robots\' own trade journals.</p>',
+  next: 'With every step done, the last comparison is the simplest alternative: holding gold.' });
+
+/* 12 */ chapter({ no: 12, title: 'Step 8 · The full picture vs holding gold', kind: 'summary',
+  body: '<h3>Account value, ' + DATA.from + ' to ' + DATA.to + '</h3><p class="small">$10,000. The robots\' line is the median of ' + DATA.runs + ' realistic-fill runs; the band covers 90% of them.</p>' +
+        '<div class="legend" id="leg12"></div><div class="chart" id="c12"></div>' +
+        '<h3>By calendar year (ideal costs)</h3><div class="scroll"><table id="t-years"></table></div>' +
+        '<p>Holding gold made ' + sp(G.book.ret, 0) + ' with a worst drop of ' + pc(G.book.dd, 0) + '; the robots made ' + sp(Rr.net[1] / ACC, 0) + ' (realistic fills, median) with a worst drop of about ' + pc(Rr.dd[1], 0) + '. Over 2008–' + yr(Lg.to) + ' holding gold returned ' + pc(G.long.perYear) + ' a year with a worst drop of ' + pc(G.long.dd, 0) + '. The robots trade both up and down, so in a falling gold market they could do better than holding; the history to show that exists only for H4 (chapter 10), and there it did not.</p>',
+  next: 'Before the conclusion, everything these tests cannot show.' });
+
+/* 13 */ chapter({ no: 13, title: 'Limits and risks', kind: 'summary',
+  body: '<ul>' + [
+    '<b>One market phase.</b> Four of five strategies have history only from 2023, a strong gold rise.',
+    '<b>Large drops with real fills.</b> A median worst drop near ' + pc(Rr.dd[1], 0) + ' at 0.5% risk a trade. The research shows 0.25% a trade roughly halves it.',
+    '<b>Thin edge per trade.</b> About ' + B.all.avgR.toFixed(2) + ' R a trade at ideal costs: worse slippage than assumed could remove it.',
+    '<b>Two strategies flagged</b> by the robustness checks (chapter 8), Dual Thrust most of all.',
+    '<b>Many ideas were tried.</b> About two dozen gold ideas were tested in this project before these five were kept.',
+    '<b>Live record too short</b> and broken by downtime (chapter 11).',
+    '<b>Not modelled:</b> the robots\' daily loss limits, and swap (overnight) costs beyond the H4 strategy.'
+  ].map(x => '<li>' + x + '</li>').join('') + '</ul>',
+  next: 'Taking the passes and the limits together, the last chapter states what follows from them.' });
+
+/* 14 */ chapter({ no: 14, title: 'Conclusion and next step', kind: 'summary', result: pill('neutral', 'DEMO ONLY'),
+  body: '<p>The book is profitable in every simulated run of 2023–' + END + ' and in the held-out month, so the edge is not just costs being ignored. But the evidence comes from one strong gold phase, the strategy with long history lost money before it, and with realistic fills its drops are large. <b>The robots stay on the demo account.</b></p>' +
+        '<p>What would change that: several months of uninterrupted demo trading (the computer must stay awake) with results inside the range of chapter 6, and a decision on the two flagged strategies and on the risk per trade.</p>' });
+
+toc();
+$('foot').innerHTML = '<p><b>Hypothetical results.</b> Backtested performance is simulated with the benefit of hindsight and does not represent actual trading. Past performance does not guarantee future results. Gold CFDs are leveraged products and can lose money quickly. This report is research for discussion only and is not investment advice, a recommendation, or an offer to manage money.</p><p>Built ' + DATA.built + ' from the project\'s research scripts; figures are computed from the backtest output except where a chapter names another study as its source.</p>';
+
+const ys = Object.keys(B.yearly).sort();
+$('t-years').innerHTML = '<thead><tr><th></th>' + ys.map(y => '<th class="n">' + y + (y === yr(DATA.from) ? '†' : y === END ? '*' : '') + '</th>').join('') + '</tr></thead><tbody>' +
+  '<tr><td>Robots, net on $10,000</td>' + ys.map(y => '<td class="n ' + (B.yearly[y] >= 0 ? 'pos' : 'neg') + '">' + susd(B.yearly[y]) + '</td>').join('') + '</tr>' +
+  '<tr><td>Holding gold</td>' + ys.map(y => { const v = DATA.goldYearly[y]; return '<td class="n ' + (v >= 0 ? 'pos' : 'neg') + '">' + sp(v, 0) + '</td>'; }).join('') + '</tr></tbody>';
+$('t-years').insertAdjacentHTML('afterend', '<p class="small">† from ' + DATA.from + '. * to ' + DATA.to + '. Robots not compounded: each trade risks $50.</p>');
+
+onRedraw(() => {
+  legend('leg6', [[css('--strat'), 'Median of ' + DATA.runs + ' runs'], [css('--strat2'), '90% of runs'], [css('--muted'), 'Ideal costs']]);
+  lineChart('c6', [{ pts: Rr.band, color: css('--strat2'), band: true }, { pts: B.eq, color: css('--muted'), w: 1.4, dash: true, end: true }, { pts: Rr.medEq, color: css('--strat'), w: 2.2, end: true }],
+    { ticks: [9000, 10000, 12000, 14000, 16000, 18000], fmt: usd, h: 280, marks: [{ at: DATA.split, label: 'judged years →' }] });
+  const ylist = []; for (let v = +yr(Lg.from); v <= +yr(Lg.to); v++) ylist.push(String(v));
+  barChart('c10', Lg.yearlyR, ylist, { color: (k, v) => v >= 0 ? '--strat' : '--fail', fmt: v => Math.round(v) + ' R', ticks: [-20, -10, 0, 10, 20], every: 2, h: 200 });
+  legend('leg12', [[css('--strat'), 'Robots, median run'], [css('--strat2'), '90% of runs'], [css('--bench'), 'Holding gold']]);
+  lineChart('c12', [{ pts: Rr.band, color: css('--strat2'), band: true }, { pts: G.bookEq, color: css('--bench'), end: true }, { pts: Rr.medEq, color: css('--strat'), w: 2.2, end: true }],
+    { ticks: [10000, 15000, 20000, 25000], fmt: usd, h: 300 });
+});
+</script>

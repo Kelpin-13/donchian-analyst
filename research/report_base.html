@@ -1,0 +1,167 @@
+<meta charset="utf-8">
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+/* Layout: a research note in numbered chapters. One reading column; each chapter ends with the reason for the next. */
+:root {
+  --bg: #f6f7f9; --paper: #ffffff; --ink: #17202b; --muted: #5b6676; --rule: #dde2e9;
+  --strat: #0f6e7a; --strat2: #6aa8b0; --bench: #a1784a; --pass: #1d7a46; --pass-bg: #e3f3e9; --fail: #b3412e; --fail-bg: #fbe8e4;
+  --warn: #8a6100; --warn-bg: #fbf0d6; --note-bg: #eef2f6;
+  --f-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f141a; --paper: #161d25; --ink: #e4e9ef; --muted: #98a3b1; --rule: #2a3440;
+  --strat: #4fc0cc; --strat2: #2f7f88; --bench: #d1a36f; --pass: #5fcf8d; --pass-bg: #163626; --fail: #f08a76; --fail-bg: #3a1d18;
+  --warn: #e7c06a; --warn-bg: #3a2f14; --note-bg: #1b2430; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f141a; --paper: #161d25; --ink: #e4e9ef; --muted: #98a3b1; --rule: #2a3440;
+  --strat: #4fc0cc; --strat2: #2f7f88; --bench: #d1a36f; --pass: #5fcf8d; --pass-bg: #163626; --fail: #f08a76; --fail-bg: #3a1d18;
+  --warn: #e7c06a; --warn-bg: #3a2f14; --note-bg: #1b2430; color-scheme: dark }
+* { box-sizing: border-box }
+html { scroll-behavior: smooth }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto } }
+body { background: var(--bg); color: var(--ink); font: 15.5px/1.6 var(--f-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 32px 64px }
+main { max-width: 960px; margin: 0 auto; display: flex; flex-direction: column; gap: 22px }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; line-height: 1.15 }
+h1 { font-size: clamp(30px, 5vw, 44px); font-weight: 700; letter-spacing: -0.01em }
+h2 { font-size: 23px; font-weight: 600 }
+h3 { font-size: 16px; font-weight: 600 }
+p { margin: 0; max-width: 70ch }
+a { color: var(--strat) }
+a:focus-visible { outline: 2px solid var(--strat); outline-offset: 2px }
+.eyebrow { font: 500 12px/1 var(--f-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted) }
+.mono, td.n { font-family: var(--f-mono); font-variant-numeric: tabular-nums }
+header { display: flex; flex-direction: column; gap: 12px }
+.meta { display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--muted); font-size: 13.5px; align-items: center }
+section { background: var(--paper); border: 1px solid var(--rule); border-radius: 6px; padding: 24px; display: flex; flex-direction: column; gap: 14px; min-width: 0; scroll-margin-top: 16px }
+.chap { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap }
+.chap .no { font: 600 13px/1 var(--f-mono); color: var(--strat); letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap }
+.kind { font: 500 11px/1 var(--f-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); border: 1px solid var(--rule); border-radius: 99px; padding: 4px 8px }
+.toc { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 4px 24px; margin: 0; padding: 0; list-style: none; counter-reset: none }
+.toc li { display: flex; gap: 10px; padding: 5px 0; border-bottom: 1px solid var(--rule); min-width: 0 }
+.toc .no { font: 500 12px/1.6 var(--f-mono); color: var(--muted); min-width: 2.2em }
+.toc .res { margin-left: auto }
+.next { border-top: 1px dashed var(--rule); padding-top: 12px; display: flex; gap: 10px; align-items: baseline; color: var(--muted); font-size: 14.5px }
+.next b { color: var(--ink); font-weight: 600; white-space: nowrap }
+.pill { display: inline-flex; align-items: center; font: 600 11.5px/1 var(--f-mono); letter-spacing: 0.04em; padding: 5px 9px; border-radius: 99px; white-space: nowrap }
+.pill.pass { color: var(--pass); background: var(--pass-bg) } .pill.fail { color: var(--fail); background: var(--fail-bg) }
+.pill.warn { color: var(--warn); background: var(--warn-bg) } .pill.neutral { color: var(--muted); background: var(--note-bg) }
+.figs { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 6px; overflow: hidden }
+.fig { background: var(--paper); padding: 14px 16px; display: flex; flex-direction: column; gap: 4px }
+.fig .v { font: 500 25px/1.1 var(--f-mono); font-variant-numeric: tabular-nums }
+.fig .l { font-size: 13px; color: var(--muted) }
+.fig .c { font: 12.5px/1.4 var(--f-mono); color: var(--muted) }
+.answer { background: var(--note-bg); border-radius: 6px; padding: 16px 18px; display: flex; flex-direction: column; gap: 8px }
+.rules { display: grid; grid-template-columns: max-content 1fr; gap: 8px 18px; margin: 0 }
+.rules dt { font: 600 12px/1.7 var(--f-mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted) }
+.rules dd { margin: 0; min-width: 0 }
+.chart { width: 100%; min-width: 0 }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible }
+.chart text { font: 11.5px var(--f-mono); fill: var(--muted) }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted) }
+.legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px }
+.scroll { overflow-x: auto; min-width: 0 }
+table { border-collapse: collapse; width: 100%; font-size: 14px }
+th, td { padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--rule); white-space: nowrap }
+th { font: 600 11.5px/1.3 var(--f-mono); text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted) }
+td.n, th.n { text-align: right }
+td.pos { color: var(--pass) } td.neg { color: var(--fail) }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px }
+.two > * { min-width: 0; display: flex; flex-direction: column; gap: 8px }
+ul, ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; max-width: 72ch }
+.small { font-size: 13px; color: var(--muted) }
+footer { color: var(--muted); font-size: 12.5px; display: flex; flex-direction: column; gap: 8px; max-width: 80ch }
+@media (max-width: 520px) { section { padding: 18px } .rules { grid-template-columns: 1fr; gap: 2px } .rules dd { margin-bottom: 8px } .next { flex-direction: column; gap: 2px } }
+</style>
+<script>
+/* Shared helpers: formatting, chapters, charts. Chart colors come from the theme tokens and redraw on theme change. */
+const $ = id => document.getElementById(id);
+const pc = (v, d = 1) => (v * 100).toFixed(d) + '%';
+const sp = (v, d = 1) => (v >= 0 ? '+' : '') + (v * 100).toFixed(d) + '%';
+const usd = v => (v < 0 ? '-$' : '$') + Math.abs(Math.round(v)).toLocaleString('en-US');
+const susd = v => (v >= 0 ? '+' : '') + usd(v);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const yr = s => s.slice(0, 4);
+const pill = (cls, t) => '<span class="pill ' + cls + '">' + t + '</span>';
+const PF = ok => ok ? pill('pass', 'PASS') : pill('fail', 'FAIL');
+const CHAPTERS = [];
+/** One chapter: number, title, kind (question / setup / test / summary), body HTML, result pill, why the next one follows. */
+function chapter(c) {
+  CHAPTERS.push(c);
+  const s = document.createElement('section'); s.id = 'ch-' + c.no;
+  s.innerHTML = '<div class="chap"><span class="no">Chapter ' + c.no + '</span><h2>' + c.title + '</h2>' + (c.result || '') + '</div>' +
+    (c.kind ? '<span class="kind" style="align-self:flex-start">' + c.kind + '</span>' : '') + c.body +
+    (c.next ? '<div class="next"><b>Why chapter ' + (c.no + 1) + ' →</b><span>' + c.next + '</span></div>' : '');
+  $('chapters').appendChild(s);
+}
+function toc() {
+  $('toc').innerHTML = CHAPTERS.map(c => '<li><span class="no">' + String(c.no).padStart(2, '0') + '</span><a href="#ch-' + c.no + '">' + c.title + '</a><span class="res">' + (c.result || '') + '</span></li>').join('');
+}
+function svgOpen(w, h) { return '<svg viewBox="0 0 ' + w + ' ' + h + '" role="img">'; }
+function lineChart(el, sets, o) {
+  const box = $(el); if (!box) return;
+  const W = Math.max(300, Math.min(box.clientWidth || 900, 960)), H = o.h || 300, L = 62, R = 14, T = 12, Bm = 26;
+  const all = sets.flatMap(s => s.pts.flatMap(p => p.slice(1))), first = sets[0].pts[0][0], last = sets[0].pts[sets[0].pts.length - 1][0];
+  const t0 = Date.parse(o.from || first), t1 = Date.parse(o.to || last), f = o.log ? Math.log : (v => v);
+  let lo = Math.min(...all), hi = Math.max(...all);
+  if (o.ticks) { lo = Math.min(lo, o.ticks[0]); hi = Math.max(hi, o.ticks[o.ticks.length - 1]); }
+  const x = t => L + (Date.parse(t) - t0) / (t1 - t0) * (W - L - R), y = v => T + (f(hi) - f(v)) / (f(hi) - f(lo)) * (H - T - Bm);
+  let g = svgOpen(W, H);
+  (o.ticks || []).forEach(v => { g += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y(v) + '" y2="' + y(v) + '" stroke="' + css('--rule') + '"/><text x="' + (L - 6) + '" y="' + (y(v) + 4) + '" text-anchor="end">' + o.fmt(v) + '</text>'; });
+  const y0 = +yr(o.from || first), y1 = +yr(o.to || last), stepY = Math.max(1, Math.ceil((y1 - y0) / (W < 600 ? 5 : 10)));
+  for (let yv = y0 + 1; yv <= y1; yv++) { if ((yv - y0 - 1) % stepY) continue; g += '<text x="' + x(yv + '-01-01') + '" y="' + (H - 6) + '" text-anchor="middle">' + yv + '</text>'; }
+  (o.marks || []).forEach(m => { const xs = x(m.at); g += '<line x1="' + xs + '" x2="' + xs + '" y1="' + T + '" y2="' + (H - Bm) + '" stroke="' + css('--muted') + '" stroke-dasharray="4 4"/><text x="' + (xs + 6) + '" y="' + (T + 12) + '" text-anchor="start">' + m.label + '</text>'; });
+  sets.forEach(s => {
+    if (s.band) {
+      const up = s.pts.map((p, i) => (i ? 'L' : 'M') + x(p[0]).toFixed(1) + ' ' + y(p[2]).toFixed(1)).join('');
+      const dn = s.pts.slice().reverse().map(p => 'L' + x(p[0]).toFixed(1) + ' ' + y(p[1]).toFixed(1)).join('');
+      g += '<path d="' + up + dn + 'Z" fill="' + s.color + '" fill-opacity="0.18" stroke="none"/>'; return;
+    }
+    const d = s.pts.map((p, i) => (i ? 'L' : 'M') + x(p[0]).toFixed(1) + ' ' + y(p[1]).toFixed(1)).join('');
+    if (s.area) g += '<path d="' + d + 'L' + x(s.pts[s.pts.length - 1][0]) + ' ' + y(o.base || 0) + 'L' + x(s.pts[0][0]) + ' ' + y(o.base || 0) + 'Z" fill="' + s.color + '" fill-opacity="0.12" stroke="none"/>';
+    g += '<path d="' + d + '" fill="none" stroke="' + s.color + '" stroke-width="' + (s.w || 1.8) + '" stroke-linejoin="round"' + (s.dash ? ' stroke-dasharray="5 4"' : '') + '/>';
+    if (s.end) { const p = s.pts[s.pts.length - 1]; g += '<circle cx="' + x(p[0]) + '" cy="' + y(p[1]) + '" r="3.5" fill="' + s.color + '"/>'; }
+  });
+  box.innerHTML = g + '</svg>';
+}
+function legend(el, items) { $(el).innerHTML = items.map(([c, t]) => '<span><i style="background:' + c + '"></i>' + t + '</span>').join(''); }
+function histogram(el, vals, mark, p95, o = {}) {
+  const box = $(el); if (!box) return;
+  const W = Math.max(260, box.clientWidth || 440), H = 190, L = 30, R = 10, T = 18, Bm = 26, fmt = o.fmt || (v => pc(v, 0)), step = o.step || 0.0025, tick = o.tick || 0.01;
+  const lo = Math.floor(Math.min(...vals, mark) / step) * step, hi = Math.ceil(Math.max(...vals, mark) / step + 0.001) * step;
+  const bins = []; for (let b = lo; b < hi - 1e-9; b += step) bins.push({ b, n: 0 });
+  vals.forEach(v => { const i = Math.min(bins.length - 1, Math.floor((v - lo) / step)); bins[i].n++; });
+  const mx = Math.max(...bins.map(b => b.n)), x = v => L + (v - lo) / (hi - lo) * (W - L - R), y = n => T + (1 - n / mx) * (H - T - Bm);
+  let g = svgOpen(W, H);
+  bins.forEach(b => { g += '<rect x="' + (x(b.b) + 1) + '" y="' + y(b.n) + '" width="' + Math.max(1, x(b.b + step) - x(b.b) - 2) + '" height="' + (H - Bm - y(b.n)) + '" fill="' + css('--bench') + '" fill-opacity="0.55"/>'; });
+  for (let v = Math.ceil(lo / tick) * tick; v <= hi + 1e-9; v += tick) g += '<text x="' + x(v) + '" y="' + (H - 6) + '" text-anchor="middle">' + fmt(v) + '</text>';
+  if (p95 !== null) g += '<line x1="' + x(p95) + '" x2="' + x(p95) + '" y1="' + T + '" y2="' + (H - Bm) + '" stroke="' + css('--muted') + '" stroke-dasharray="3 3"/><text x="' + (x(p95) - 4) + '" y="' + (T - 5) + '" text-anchor="end">' + (o.p95Label || '95th pct') + ' ' + (o.lfmt || pc)(p95) + '</text>';
+  g += '<line x1="' + x(mark) + '" x2="' + x(mark) + '" y1="' + (T - 4) + '" y2="' + (H - Bm) + '" stroke="' + css('--strat') + '" stroke-width="2.5"/>' +
+       '<text x="' + Math.min(x(mark) + 5, W - 4) + '" y="' + (T + 10) + '" text-anchor="' + (x(mark) > W - 90 ? 'end' : 'start') + '" style="fill:' + css('--strat') + '">' + (o.markLabel || 'rule') + ' ' + (o.lfmt || pc)(mark) + '</text>';
+  box.innerHTML = g + '</svg>';
+}
+function barChart(el, obj, keys, o = {}) {
+  const box = $(el); if (!box) return;
+  const W = Math.max(260, box.clientWidth || 440), H = o.h || 170, L = 40, R = 6, T = 8, Bm = 24;
+  const vals = keys.map(k => obj[k] || 0), mx = Math.max(0, ...vals), mn = Math.min(0, ...vals), bw = (W - L - R) / keys.length;
+  const y = v => T + (mx - v) / ((mx - mn) || 1) * (H - T - Bm);
+  let g = svgOpen(W, H);
+  (o.ticks || [mn, 0, mx]).forEach(v => { g += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y(v) + '" y2="' + y(v) + '" stroke="' + css('--rule') + '"/><text x="' + (L - 4) + '" y="' + (y(v) + 4) + '" text-anchor="end">' + (o.fmt || String)(v) + '</text>'; });
+  keys.forEach((k, i) => {
+    const v = obj[k] || 0, top = Math.min(y(v), y(0)), h = Math.abs(y(v) - y(0));
+    g += '<rect x="' + (L + i * bw + 1.5) + '" y="' + top + '" width="' + Math.max(1, bw - 3) + '" height="' + Math.max(h, 0.5) + '" fill="' + css(o.color ? o.color(k, v) : '--strat') + '"/>';
+    if (i % (o.every || 3) === 0) g += '<text x="' + (L + i * bw + bw / 2) + '" y="' + (H - 6) + '" text-anchor="middle">' + "'" + k.slice(2) + '</text>';
+  });
+  box.innerHTML = g + '</svg>';
+}
+function onRedraw(fn) {
+  fn();
+  let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(fn, 150); });
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', fn);
+  new MutationObserver(fn).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+}
+</script>

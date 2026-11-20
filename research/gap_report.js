@@ -12,6 +12,13 @@
  */
 const fs = require('fs'), path = require('path');
 const D = path.join(__dirname, '..', 'data', 'reports');
+/** The page: its <title> line first (the first 8KB is scanned for it), then the shared base (styles, chart helpers), then the page. */
+function page(file, data, round) {
+  const tpl = fs.readFileSync(path.join(__dirname, file), 'utf8'), cut = tpl.indexOf('\n');
+  return tpl.slice(0, cut + 1) + fs.readFileSync(path.join(__dirname, 'report_base.html'), 'utf8') + tpl.slice(cut + 1).replace('/*DATA*/null', JSON.stringify(data, round));
+}
+module.exports = { page };
+if (require.main !== module) return;
 const load = f => JSON.parse(fs.readFileSync(path.join(D, f), 'utf8'));
 const A = load('gap_A.json'), B = load('gap_B.json'), AO = load('gap_A_open.json'), BO = load('gap_B_open.json');
 
@@ -62,13 +69,13 @@ const data = {
   A: pack(A), B: pack(B),
   open: { A: { test: AO.test, p95: pctl(AO.randomCagr, 95), pass: AO.pass }, B: { test: BO.test, p95: pctl(BO.randomCagr, 95), pass: BO.pass } },
   spy: { design: A.spy[0], test: A.spy[1], cagr: spyS.cagr, maxDd: spyS.maxDd, vol: spyS.vol, yearly: spyS.yearly, eq: weekly(A.spyEq), dd: weekly(spyS.dd) },
-  listA: A.stocks, listB: B.stocks
+  listA: A.stocks, listB: B.stocks, choices: A.choices, parity: load('gap_parity.json')
 };
+data.A.pick = A.pick;
 data.A.corr = corr(data.A.rets, spyS.rets); data.B.corr = corr(data.B.rets, spyS.rets);
 delete data.A.rets; delete data.B.rets;
 const round = (k, v) => typeof v === 'number' ? +v.toFixed(5) : v;
-const tpl = fs.readFileSync(path.join(__dirname, 'gap_report.html'), 'utf8');
-const out = tpl.replace('/*DATA*/null', JSON.stringify(data, round));
+const out = page('gap_report.html', data, round);
 fs.writeFileSync(path.join(D, 'gap_report.html'), out);
 console.log('wrote data/reports/gap_report.html (' + Math.round(out.length / 1024) + ' KB)');
 console.log('A: CAGR', (data.A.cagr * 100).toFixed(1), 'DD', (data.A.maxDd * 100).toFixed(1), 'vol', (data.A.vol * 100).toFixed(1), 'corr', data.A.corr.toFixed(2), 'trades', data.A.trades.n, 'win', data.A.trades.win.toFixed(2), 'avgR', data.A.trades.avgR.toFixed(2), 'names', data.A.trades.names);

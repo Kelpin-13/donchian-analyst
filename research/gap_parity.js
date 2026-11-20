@@ -45,3 +45,4 @@ const byMonth = {}; [...sheet].forEach(x => { const m = x.split(' ')[1].slice(0,
 const months = (Date.UTC(2026, 10, 1) - FROM) / (30.44 * 86400000);
 console.log('signals per month (sheet, 2017-2026):', (sheet.size / months).toFixed(2), '| months with none:', Math.round(months - Object.keys(byMonth).length), 'of', Math.round(months));
 console.log('last 8:', [...sheet].sort((a, b) => a.split(' ')[1] < b.split(' ')[1] ? -1 : 1).slice(-8).join(', '));
+fs.writeFileSync(R + 'data/reports/gap_parity.json', JSON.stringify({ tickers: tickers.length, sheet: sheet.size, lab: lab.size, both: [...sheet].filter(x => lab.has(x)).length, onlySheet, onlyLab, perMonth: sheet.size / months }));

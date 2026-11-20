@@ -203,6 +203,7 @@ const EXP = process.argv.indexOf('--export');
 if (EXP > 0) {
   const day = t => new Date(t).toISOString().slice(0, 10);
   fs.writeFileSync(process.argv[EXP + 1], JSON.stringify({
+    choices: Object.fromEntries(Object.entries(res).map(([k, v]) => [k, { a: v.a, b: v.b }])),
     list: LIST, nextOpen: OPEN, stocks: STOCKS, pick, randomRuns: RANDOM_RUNS, split: day(SPLIT),
     design: p.a, test: p.b, spy: bh, randomCagr: p.rc, pass: [t1, t2, t3],
     eq: p.r.eq.map(x => [day(x.t), +x.v.toFixed(6)]), spyEq: bhEq.map(x => [day(x.t), +(x.v / bhEq[0].v).toFixed(6)]),
