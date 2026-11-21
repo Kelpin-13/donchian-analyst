@@ -230,7 +230,7 @@ function sendAlert_(text) {
     }
   }
 
-  if (telegramChatId_()) {
+  if (telegramChatId_() && !TELEGRAM_CFG.weeklyOnly) {           // muted with the rest (Morning.gs TELEGRAM_CFG)
     try {
       const token = secret_('TELEGRAM_BOT_TOKEN', true);
       UrlFetchApp.fetch('https://api.telegram.org/bot' + token + '/sendMessage', {

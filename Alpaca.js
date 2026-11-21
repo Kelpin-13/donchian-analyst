@@ -21,13 +21,18 @@
  * Also (owner, 21 Nov 2026): a self-test on the menu (places a 1-share SPY limit buy at half the price, reads it back,
  * cancels it), each closed trade's result in R kept in ALPACA_CLOSED, and a weekly scorecard on Telegram (Saturday
  * 09:00): the paper account against SPY since ALPACA_START, closed trades against the backtest's expectation.
+ * Core (owner, 21 Nov 2026: "yes switch to spare money in SPY"; research/gap_lab.js --core added about 1% a year on both
+ * lists): in the entry window the account is topped up to hold SPY with everything not in gap trades (1% kept as
+ * cash), with a market-on-close SPY order when the difference is over 0.5% of equity. SPY is held in any market (the
+ * market filter only gates gap buys), so the paper account takes SPY's drops. SPY has no stop.
  */
 const ALPACA = {
   base: 'https://paper-api.alpaca.markets',      // the paper server; never the live one
   sheet: 'Alpaca', riskPct: 0.5, maxWeight: 0.2, maxPos: 10,
   entryMin: [11, 22], openMin: [3, 30], eveningHours: [16, 19],
   // the backtest's test half, lists A + B (2017 - Nov 2026, 179 trades): what the paper record is judged against
-  expect: { avgR: 0.32, sdR: 1.73, win: 0.45, perMonth: 1.5 }
+  expect: { avgR: 0.32, sdR: 1.73, win: 0.45, perMonth: 1.5 },
+  core: { on: true, symbol: 'SPY', cashPct: 1, minTradePct: 0.5 }
 };
 
 /* ---------------- timer, menu ---------------- */
@@ -131,6 +136,12 @@ function alpacaEntryPlan_(rows, marketOk, equity, cash, held) {
     });
   return out;
 }
+/** The core order in SPY shares (+ buy, - sell, 0 = leave): hold SPY with all but the cash buffer and the gap trades. */
+function alpacaCoreDelta_(equity, gapValue, spyQty, spyPrice) {
+  const C = ALPACA.core, want = Math.max(0, Math.floor((equity * (1 - C.cashPct / 100) - gapValue) / spyPrice));
+  const d = want - spyQty;
+  return Math.abs(d) * spyPrice >= equity * C.minTradePct / 100 ? d : 0;
+}
 /** Trading days after the entry day, counted on a bar series (Yahoo stamps each day at the 09:30 New York open). */
 function alpacaDaysSince_(bars, entryDay) {
   return bars.filter(b => new Date(b.t).toISOString().slice(0, 10) > entryDay).length;
@@ -158,7 +169,9 @@ function alpacaEntry_(st, clock) {
   const bars = alpacaYahoo_(list), spy = bars.SPY;
   if (!spy || new Date(spy[spy.length - 1].t).toISOString().slice(0, 10) !== today) { log.push(['SKIP', '', '', '', 'no Yahoo bar for today yet']); alpacaLog_(log); return; }
   const acct = alpacaApi_('get', '/v2/account'), positions = alpacaApi_('get', '/v2/positions');
-  const held = positions.map(p => p.symbol);
+  const C = ALPACA.core, held = positions.map(p => p.symbol).filter(x => x !== C.symbol);   // the core is not a gap position
+  const spyPos = positions.find(x => x.symbol === C.symbol), spyQty = spyPos ? +spyPos.qty : 0, spyPrice = spy[spy.length - 1].c;
+  let halfValue = 0;
   // day 3: sell half at the close; the remaining shares keep their stop until the evening run moves it to the entry
   Object.keys(st.pos).forEach(sym => {
     const p = st.pos[sym], pos = positions.find(x => x.symbol === sym);
@@ -168,12 +181,22 @@ function alpacaEntry_(st, clock) {
     if (half < 1) { log.push(['DAY 3', sym, qty, '', 'one share: kept, stop moves to the entry tonight']); return; }
     alpacaCancel_(p.stopId);
     alpacaApi_('post', '/v2/orders', { symbol: sym, qty: String(half), side: 'sell', type: 'market', time_in_force: 'cls' });
+    halfValue += half * (+pos.current_price);
     p.stopId = alpacaStop_(sym, qty - half, p.stop);
     log.push(['SELL HALF (close)', sym, half, '', 'day 3; stop ' + p.stop + ' on the other ' + (qty - half)]);
   });
   const rows = [];
   list.forEach(t => { const b = bars[t]; if (!b) return; const r = stocksRow_(t, b); if (r) rows.push(r); });
-  const plan = alpacaEntryPlan_(rows, stocksMarketOk_(spy), +acct.equity, +acct.cash, held);
+  const plan = alpacaEntryPlan_(rows, stocksMarketOk_(spy), +acct.equity, +acct.cash + (C.on ? spyQty * spyPrice : 0), held);
+  if (C.on) {                                       // the core: SPY with everything not in gap trades, settled at the close
+    const gapValue = positions.filter(x => x.symbol !== C.symbol).reduce((a, x) => a + (+x.market_value), 0) - halfValue +
+                     plan.reduce((a, o) => a + o.qty * o.price, 0);
+    const d = alpacaCoreDelta_(+acct.equity, gapValue, spyQty, spyPrice);
+    if (d) {
+      alpacaApi_('post', '/v2/orders', { symbol: C.symbol, qty: String(Math.abs(d)), side: d > 0 ? 'buy' : 'sell', type: 'market', time_in_force: 'cls' });
+      log.push([d > 0 ? 'CORE BUY (close)' : 'CORE SELL (close)', C.symbol, Math.abs(d), spyPrice, d > 0 ? 'spare money into SPY' : 'SPY sold to pay for gap buys']);
+    }
+  }
   plan.forEach(o => {
     const res = alpacaApi_('post', '/v2/orders', { symbol: o.symbol, qty: String(o.qty), side: 'buy', type: 'market', time_in_force: 'cls' });
     st.pos[o.symbol] = { entryDay: today, stop: o.stop, half: false, stopId: null, buyId: res.id, exitNext: false };
@@ -322,7 +345,7 @@ function alpacaWeekly() {
       marketOk: spy ? spy[spy.length - 1].c > spy.slice(-200).reduce((x, b) => x + b.c, 0) / 200 : false,
       closed: alpacaClosed_(), weeks: Math.max(0, (Date.now() - Date.parse(start.day)) / (7 * 86400000)) });
     const chat = telegramChatId_();
-    if (chat) telegramCall_('sendMessage', { chat_id: String(chat), text });
+    if (chat) telegramCall_('sendMessage', { chat_id: String(chat), text }, { weekly: true });
     alpacaLog_([['SCORECARD', '', '', '', text.split('\n')[1]]]);
   } catch (e) { logLine_('ERROR', 'Alpaca weekly: ' + e.message); }
 }

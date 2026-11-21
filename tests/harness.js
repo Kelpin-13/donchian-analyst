@@ -227,6 +227,7 @@ function world(opts) {
   fs.readdirSync(dir).filter(f => f.endsWith('.js')).sort()
     .forEach(f => vm.runInContext(fs.readFileSync(path.join(dir, f), 'utf8'), ctx, { filename: f }));
   const run = code => vm.runInContext(code, ctx);
+  if (!o.telegramMuted) run("if (typeof TELEGRAM_CFG !== 'undefined') TELEGRAM_CFG.weeklyOnly = false;");   // tests of the senders
   // Claude-backed steps are replaced: tests check plumbing, not model output.
   run(`agentPreTradeNote_ = function () { return { setup: 'test', invalidation: '', watch: '', confidence: 'n/a' }; };
        if (CONFIG.GATE) CONFIG.GATE.mode = 'off';`);

@@ -82,7 +82,7 @@ function telegramConnect_() {
   const chat = msgs[msgs.length - 1].chat;
   PropertiesService.getScriptProperties().setProperty('TELEGRAM_CHAT_ID', String(chat.id));
   morningMapOn_();
-  telegramCall_('sendMessage', { chat_id: String(chat.id), text: 'Connected. The MT5 daily report will arrive here at 07:30, Tuesday to Saturday, and any MT5 alert at once.' });
+  telegramCall_('sendMessage', { chat_id: String(chat.id), text: 'Connected. ' + (TELEGRAM_CFG.weeklyOnly ? 'Only the weekly Alpaca scorecard is sent here (Saturday 09:00).' : 'The MT5 daily report will arrive here at 07:30, Tuesday to Saturday, and any MT5 alert at once.') }, { reply: true });
   logLine_('INFO', 'Telegram connected; morning map timer on');
   return { ok: true, text: 'Connected to the Telegram chat of ' + (chat.first_name || chat.username || 'this account') +
            ' (a confirmation was sent there). If that is not you, run Morning map: stop and remove TELEGRAM_CHAT_ID from Script Properties.\n\n' +
@@ -105,8 +105,16 @@ function morningMapOff() {
 }
 
 /* ---------------- Telegram ---------------- */
+/**
+ * weeklyOnly (owner, 21 Nov 2026: "deactivate all the message for telegram bot ... i just need it as weekly only"):
+ * every send is skipped except the Alpaca weekly scorecard and the reply to Connect Telegram (both pass opts). The
+ * daily report, MT5 alerts, gap signals and Alpaca order messages still run and still write the Sheet; they just do not
+ * reach Telegram. Set weeklyOnly to false to bring them back.
+ */
+const TELEGRAM_CFG = { weeklyOnly: true };
 /** Telegram Bot API call. Errors carry Telegram's description, never the URL (it holds the token). */
-function telegramCall_(method, payload) {
+function telegramCall_(method, payload, opts) {
+  if (TELEGRAM_CFG.weeklyOnly && /^send/.test(method) && !(opts && (opts.weekly || opts.reply))) return null;   // muted
   const res = UrlFetchApp.fetch('https://api.telegram.org/bot' + secret_('TELEGRAM_BOT_TOKEN', true) + '/' + method,
                                 { method: 'post', muteHttpExceptions: true, payload: payload });
   let body = null;

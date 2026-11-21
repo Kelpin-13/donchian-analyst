@@ -1426,6 +1426,17 @@ section('Alpaca paper trading');
   let refused = false; try { W.run('alpacaKeys_()'); } catch (x) { refused = /not a paper key/.test(x.message); }
   ok(refused, 'alpaca: live keys are refused');
   ok(W.run('ALPACA.base') === 'https://paper-api.alpaca.markets', 'alpaca: the paper server only');
+  ok(W.run('alpacaCoreDelta_(100000, 0, 0, 500)') === 198, 'core: an empty account buys SPY with 99% of equity');
+  ok(W.run('alpacaCoreDelta_(100000, 20000, 198, 500)') === -40, 'core: a $20,000 gap buy is paid for by selling SPY');
+  ok(W.run('alpacaCoreDelta_(100000, 0, 246, 400)') === 0, 'core: differences under 0.5% of equity are left alone');
+  {
+    const M = world({ markets: MARKETS, props: { TELEGRAM_BOT_TOKEN: 'tg', TELEGRAM_CHAT_ID: '42' }, telegramMuted: true });
+    const before = M.telegram.length;
+    M.run("telegramCall_('sendMessage', { chat_id: '42', text: 'daily' })");
+    ok(M.telegram.length === before, 'telegram: weekly-only mode skips ordinary messages');
+    M.run("telegramCall_('sendMessage', { chat_id: '42', text: 'scorecard' }, { weekly: true })");
+    ok(M.telegram.length === before + 1, 'telegram: the weekly scorecard still goes out');
+  }
   W.ctx.__f = [{ symbol: 'XYZ', side: 'buy', qty: '100', price: '110', transaction_time: '2026-11-20T20:59:00Z' },
                { symbol: 'XYZ', side: 'sell', qty: '50', price: '116', transaction_time: '2026-11-25T20:59:00Z' },
                { symbol: 'XYZ', side: 'sell', qty: '50', price: '108', transaction_time: '2026-11-30T14:30:00Z' },
