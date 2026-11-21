@@ -82,6 +82,15 @@
  *   Reading: one trade (GME, Jan 2021, +34% of equity) is most of the test-half profit, and the 35% drop is that
  *   open profit given back; smaller, more volatile stocks gap through their stops (worst trades -2.2% to -3.2% of
  *   equity against 0.5% risked); 2026 to date -28%. The edge found on the largest stocks does not carry to the rest.
+ * Core + extra (owner, 21 Nov 2026: "do all three"; fixed and committed before it runs): the account holds SPY with all
+ *   its idle money, all the time (the core), and the gap rule (the extra) sells SPY to buy each gap stock and buys SPY
+ *   back when it sells. Same G6 rule, sizing on total equity (0.5% risk, at most 20% a stock, 10 positions), the
+ *   market filter only gates the gap buys (the core is held in any market). Idle money earns SPY's total return
+ *   (adjusted close) instead of the T-bill; costs 0.10% a side (0.05% for the stock + 0.05% for the SPY switch).
+ *   The random control is the same core with random entries. node research/gap_lab.js 100 --core [--list B]
+ *   The extra ADDS VALUE only if, on 2017 to the end, on BOTH list A and list B: (1) CAGR above holding SPY alone;
+ *   (2) worst drawdown no more than 2 percentage points worse than SPY's; (3) CAGR above the random 95th percentile.
+ *   Otherwise the paper account stays as it is (gap rule with cash). Nothing is changed in Alpaca.gs by this study.
  * --export <file.json>: also writes the picked choice's daily equity, trades, SPY and the random control for
  *   research/gap_report.js (the shareable report). Changes no result.
  * Research only: nothing here trades.
@@ -91,8 +100,8 @@ const path = require('path');
 const DIR = path.join(__dirname, '..', 'data', 'yahoo');
 const RANDOM_RUNS = Number(process.argv[2]) || 100;
 const DAY = 86400000, FROM = Date.UTC(2008, 0, 1), SPLIT = Date.UTC(2017, 0, 1);
-const CFD = process.argv.includes('--cfd'), FIN_MARKUP = 3;
-const COST = CFD ? 0.001 : 0.0005, RISK = 0.005, MAX_POS = 10, MAX_W = 0.2, MIN_DV = 50e6, MAX_ATR = 2;
+const CFD = process.argv.includes('--cfd'), FIN_MARKUP = 3, CORE = process.argv.includes('--core');
+const COST = CFD || CORE ? 0.001 : 0.0005, RISK = 0.005, MAX_POS = 10, MAX_W = 0.2, MIN_DV = 50e6, MAX_ATR = 2;
 const TBILL = { 2007: 4.36, 2008: 1.37, 2009: 0.15, 2010: 0.14, 2011: 0.05, 2012: 0.09, 2013: 0.06, 2014: 0.03, 2015: 0.05, 2016: 0.32,
                 2017: 0.93, 2018: 1.94, 2019: 2.06, 2020: 0.36, 2021: 0.05, 2022: 2.02, 2023: 5.07, 2024: 4.97, 2025: 4.2, 2026: 3.8 };
 const LIST_A = ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'GOOGL', 'META', 'TSLA', 'AVGO', 'AMD', 'NFLX', 'ORCL', 'CRM', 'ADBE', 'QCOM', 'MU',
@@ -149,7 +158,8 @@ function run(G, plan, rand) {
   for (let i = start; i < N; i++) {
     const yr = new Date(dates[i]).getUTCFullYear();
     const bill = TBILL[yr] !== undefined ? TBILL[yr] : 3.8;
-    if (!CFD) cash *= 1 + bill / 100 / 252;
+    if (CORE) cash *= spyA[i] / spyA[i - 1];               // --core: idle money is held in SPY
+    else if (!CFD) cash *= 1 + bill / 100 / 252;
     else pos.forEach(q => { const f = q.sh * q.last * (bill + FIN_MARKUP) / 100 / 252; cash -= f; q.pnl -= f; });   // CFD financing
     const eqStart = value(i - 1);
     if (OPEN) {                           // --next-open: yesterday's signals fill at today's open
@@ -236,6 +246,12 @@ const res = {};
 });
 const pick = LIST !== 'A' || OPEN ? 'G6' : res.G10.a.mar > res.G6.a.mar ? 'G10' : 'G6', p = res[pick];   // list B: replication of the list A pick
 const t1 = p.b.mar > bh[1].mar, t2 = p.b.cagr > pct(p.rc, 95), t3 = p.b.pf >= 1.3 && p.b.n >= 50;
+if (CORE) {
+  const c1 = p.b.cagr > bh[1].cagr, c2 = p.b.dd <= bh[1].dd + 0.02, c3 = p.b.cagr > pct(p.rc, 95);
+  console.log('  CORE + EXTRA, list ' + LIST + ', test: (1) CAGR' + pc(p.b.cagr) + ' vs SPY' + pc(bh[1].cagr) + (c1 ? ' ok' : ' NO') +
+              '; (2) worst DD' + pc(p.b.dd) + ' vs SPY' + pc(bh[1].dd) + ' + 2' + (c2 ? ' ok' : ' NO') +
+              '; (3) CAGR vs random p95' + pc(pct(p.rc, 95)) + (c3 ? ' ok' : ' NO') + ' -> ' + (c1 && c2 && c3 ? 'ADDS VALUE on this list' : 'DOES NOT ADD VALUE'));
+}
 console.log((LIST === 'C' ? '  list C (' + STOCKS.length + ' stocks), G6 as picked on list A' : LIST === 'OANDA' ? '  OANDA 33' + (CFD ? ' at CFD costs' : ' at share costs (information)') + ', G6 as picked on list A' : LIST === 'B' ? '  replication on list B, G6 as picked on list A' : '  picked on design: ' + pick) + ' -> test: (1) MAR ' + p.b.mar.toFixed(2) + ' vs SPY ' + bh[1].mar.toFixed(2) + (t1 ? ' ok' : ' NO') +
             '; (2) CAGR' + pc(p.b.cagr) + ' vs random p95' + pc(pct(p.rc, 95)) + (t2 ? ' ok' : ' NO') +
             '; (3) PF ' + p.b.pf.toFixed(2) + ' on ' + p.b.n + ' trades' + (t3 ? ' ok' : ' NO') + ' -> ' + (t1 && t2 && t3 ? 'PASS (paper portfolio)' : 'FAIL'));
