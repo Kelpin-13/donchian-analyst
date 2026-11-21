@@ -66,6 +66,17 @@
  *   Reading: the edge over random entries survives on these 33 (and at share costs they pass easily: 4.3%, MAR 2.37,
  *   PF 1.74); what sinks it is the CFD account: idle cash earning nothing and financing on every position take about
  *   2.8% a year off both the rule and the random runs. Not re-run with other assumptions: that would be tuning.
+ * List C, wider universe (owner, 21 Nov 2026: "i wish to do other stocks also, dont restrict to s&P only", chose "more
+ *   stocks"; fixed and committed before it runs): every current S&P 500 and S&P MidCap 400 member that is not in list A
+ *   or B, 804 tickers, in research/list_c.txt (from Wikipedia's member tables, 21 Nov 2026; the Nasdaq-100 page lists no
+ *   symbols and nearly all its members are in the S&P 500). Only those with Yahoo data are used. node research/gap_lab.js
+ *   100 --list C. The G6 rule unchanged (same $50M liquidity floor, so smaller mid-caps join only once they trade enough),
+ *   share costs, same split, same sizing, at most 10 positions, biggest gap first. One data guard, for bad prices in
+ *   Yahoo's smaller names: no signal when the open is more than 3x yesterday's close (a missed split, not a gap).
+ *   PASS only if, on 2017 to the end, the same three tests hold: MAR above SPY's, CAGR above the random 95th percentile,
+ *   PF at least 1.3 on at least 50 trades. Warning written beforehand: survivorship bias is larger here (mid-caps that
+ *   are members today are often ones that rose into the index); the random control on the same list is what corrects
+ *   for it. A PASS lets Stocks.gs and Alpaca.gs scan list C too; a FAIL leaves them on lists A and B.
  * --export <file.json>: also writes the picked choice's daily equity, trades, SPY and the random control for
  *   research/gap_report.js (the shareable report). Changes no result.
  * Research only: nothing here trades.
@@ -86,11 +97,12 @@ const LIST_B = ['ABT', 'ACN', 'AIG', 'AMGN', 'AXP', 'BK', 'BKNG', 'BLK', 'BMY', 
   'CVS', 'DE', 'DHR', 'DUK', 'EMR', 'FDX', 'GD', 'GILD', 'GM', 'HON', 'IBM', 'ISRG', 'LIN', 'LMT', 'LOW', 'MCD', 'MDLZ', 'MDT',
   'MET', 'MMM', 'MO', 'MS', 'NEE', 'NOW', 'PG', 'PM', 'RTX', 'SCHW', 'SO', 'SPG', 'TGT', 'TMO', 'TXN', 'UNP', 'UPS', 'USB'];
 const LARG = process.argv.includes('--list') ? process.argv[process.argv.indexOf('--list') + 1] : 'A';
-const LIST = LARG === 'B' ? 'B' : LARG === 'OANDA' ? 'OANDA' : 'A';
+const LIST = LARG === 'B' ? 'B' : LARG === 'OANDA' ? 'OANDA' : LARG === 'C' ? 'C' : 'A';
+const LIST_C = LIST === 'C' ? fs.readFileSync(path.join(__dirname, 'list_c.txt'), 'utf8').trim().split(/\s+/) : [];
 const LIST_OANDA = ['AAPL', 'AMZN', 'BABA', 'DIS', 'F', 'GE', 'GOOGL', 'META', 'MSFT', 'NFLX', 'NVDA', 'PFE', 'TSLA', 'T', 'XOM', 'ADBE', 'AMD',
   'COIN', 'COST', 'CRM', 'GS', 'INTC', 'JNJ', 'JPM', 'KO', 'NKE', 'ORCL', 'PLTR', 'PYPL', 'UBER', 'SBUX', 'V', 'WMT'];
 const OPEN = process.argv.includes('--next-open');
-const STOCKS = (LIST === 'B' ? LIST_B : LIST === 'OANDA' ? LIST_OANDA : LIST_A).filter(t => fs.existsSync(path.join(DIR, t + '.csv')));   // BK: Yahoo returns no data, skipped
+const STOCKS = (LIST === 'B' ? LIST_B : LIST === 'OANDA' ? LIST_OANDA : LIST === 'C' ? LIST_C : LIST_A).filter(t => fs.existsSync(path.join(DIR, t + '.csv')));   // BK: Yahoo returns no data, skipped
 
 const read = t => fs.readFileSync(path.join(DIR, t + '.csv'), 'utf8').trim().split(/\r?\n/).slice(1).map(l => {
   const p = l.split(','); return { t: Date.parse(p[0] + 'T00:00:00Z'), o: +p[1], h: +p[2], l: +p[3], c: +p[4], a: +p[5], v: +p[6] };
@@ -116,6 +128,7 @@ function gaps(G, i) {
   S.forEach((s, k) => {
     const b = s.bars[i], p = s.bars[i - 1];
     if (!b || !p || !liquid(s, i - 1) || !(b.o >= p.c * (1 + G)) || !(b.c >= b.o)) return;
+    if (b.o > p.c * 3) return;                                   // data guard (list C note): a missed split, not a gap
     if (b.c - b.l > MAX_ATR * s.atr[i - 1] || !(b.c > b.l)) return;
     out.push({ k, stop: b.l, atr: s.atr[i - 1], pri: b.o / p.c });
   });
@@ -218,7 +231,7 @@ const res = {};
 });
 const pick = LIST !== 'A' || OPEN ? 'G6' : res.G10.a.mar > res.G6.a.mar ? 'G10' : 'G6', p = res[pick];   // list B: replication of the list A pick
 const t1 = p.b.mar > bh[1].mar, t2 = p.b.cagr > pct(p.rc, 95), t3 = p.b.pf >= 1.3 && p.b.n >= 50;
-console.log((LIST === 'OANDA' ? '  OANDA 33' + (CFD ? ' at CFD costs' : ' at share costs (information)') + ', G6 as picked on list A' : LIST === 'B' ? '  replication on list B, G6 as picked on list A' : '  picked on design: ' + pick) + ' -> test: (1) MAR ' + p.b.mar.toFixed(2) + ' vs SPY ' + bh[1].mar.toFixed(2) + (t1 ? ' ok' : ' NO') +
+console.log((LIST === 'C' ? '  list C (' + STOCKS.length + ' stocks), G6 as picked on list A' : LIST === 'OANDA' ? '  OANDA 33' + (CFD ? ' at CFD costs' : ' at share costs (information)') + ', G6 as picked on list A' : LIST === 'B' ? '  replication on list B, G6 as picked on list A' : '  picked on design: ' + pick) + ' -> test: (1) MAR ' + p.b.mar.toFixed(2) + ' vs SPY ' + bh[1].mar.toFixed(2) + (t1 ? ' ok' : ' NO') +
             '; (2) CAGR' + pc(p.b.cagr) + ' vs random p95' + pc(pct(p.rc, 95)) + (t2 ? ' ok' : ' NO') +
             '; (3) PF ' + p.b.pf.toFixed(2) + ' on ' + p.b.n + ' trades' + (t3 ? ' ok' : ' NO') + ' -> ' + (t1 && t2 && t3 ? 'PASS (paper portfolio)' : 'FAIL'));
 const EXP = process.argv.indexOf('--export');
