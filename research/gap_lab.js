@@ -77,6 +77,11 @@
  *   PF at least 1.3 on at least 50 trades. Warning written beforehand: survivorship bias is larger here (mid-caps that
  *   are members today are often ones that rose into the index); the random control on the same list is what corrects
  *   for it. A PASS lets Stocks.gs and Alpaca.gs scan list C too; a FAIL leaves them on lists A and B.
+ * List C result (21 Nov 2026, one run, all 804 had Yahoo data): G6 test half 3.1% a year, worst DD 35.1%, MAR 0.09 vs SPY
+ *   0.41 (NO); random p50 2.0%, p95 4.1% (NO); PF 1.03 on 859 trades (NO) -> FAIL on all three. Lists A and B only.
+ *   Reading: one trade (GME, Jan 2021, +34% of equity) is most of the test-half profit, and the 35% drop is that
+ *   open profit given back; smaller, more volatile stocks gap through their stops (worst trades -2.2% to -3.2% of
+ *   equity against 0.5% risked); 2026 to date -28%. The edge found on the largest stocks does not carry to the rest.
  * --export <file.json>: also writes the picked choice's daily equity, trades, SPY and the random control for
  *   research/gap_report.js (the shareable report). Changes no result.
  * Research only: nothing here trades.
