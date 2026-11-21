@@ -23,6 +23,23 @@
  *              information. Pass: on 2017-2026 the picked choice's median total R is above 0 in at least 90% of
  *              runs, its median profit factor is over 1.3, and both halves (2017-2021, 2022-2026) are above 0 at the
  *              median. Buy-and-hold gold is shown for comparison: a long-biased trend rule must be judged against it.
+ *
+ * RESULT (single run, 20 Nov 2026, 100 runs of random fills; daily bars 2008-01-01 to 2026-11-19, 5150 days):
+ *   choice  | 2008-16: n   med R    dd     PF  ratio | 2017-26: n   med R    dd     PF  ratio  runs>0 | 2017-21 R  2022-26 R
+ *   63      |       153     4.5   5.8   1.13   0.78 |       138     4.9   8.5   1.13   0.58    100% |       3.9       1.0
+ *   126     |       103    13.3   6.2   1.51   2.17 |        96    20.4   2.5   1.81   8.31    100% |      12.5       8.0
+ *   252     |       100     0.1   6.9   1.00   0.02 |       103     6.1   8.5   1.20   0.71    100% |       1.5       4.6
+ *   blend   |       118     9.6   4.6   1.35   2.12 |       126    10.7   7.4   1.33   1.45    100% |      12.4      -1.7
+ *   picked on 2008-2016: 126 days (ratio 2.17, the blend close behind at 2.12) -> 2017-2026: median 20.4 R, PF 1.81,
+ *   above 0 in 100% of runs, halves 12.5 / 8.0 R -> PASS on the written rule.
+ *   by year (median run): 2008 1.5 | 2009 4.9 | 2010 -1.8 | 2011 4.2 | 2012 -4.6 | 2013 4.8 | 2014 0.4 | 2015 -0.1 | 2016 3.9 |
+ *   2017 0.6 | 2018 0.6 | 2019 5.2 | 2020 3.1 | 2021 3.2 | 2022 -1.0 | 2023 2.1 | 2024 0.2 | 2025 5.3 | 2026 1.7
+ *   longs 116 trades 24.1 R, shorts 84 trades 10.1 R; average hold 15 days (the 3 ATR trail ends most trades long before
+ *   the signal turns); swap -6.4 R in total; fresh month 1 trade, +0.4 R (information only).
+ *   Buy-and-hold gold: +38% on 2008-16, +260% on 2017-26; the strategy at 0.5% risk a trade, not compounded: +7% and +10%
+ *   (worst drop about 3% and 1% of the start). It passes the rule; it does not beat holding gold in money at this risk.
+ *   Data notes: the broker's daily file has spread 0 on every day before 2021, so 2008-2020 costs are only the $0.05 and
+ *   the slippage draw (small next to a 3 ATR stop); swap uses today's rates for all years.
  * Research only: nothing here trades.
  */
 const fs = require('fs');

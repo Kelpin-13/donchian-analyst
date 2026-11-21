@@ -831,3 +831,33 @@ After the OANDA CFD retest failed (section 44), the owner chose a broker paper a
 - **Signal and size** as Stocks.gs and the study, with Yahoo's daily bar so far standing in for the close (the study knew the close; this decides about 15 minutes earlier, and cannot be backtested without intraday stock data, so the paper record is the test of that difference). 0.5% of equity at risk, at most 20% in one stock and 10 positions, whole shares, biggest gap first.
 - Pure parts tested in tests/run.js (windows, entry plan, day count, evening plan, key refusal). The order calls themselves are untested until the first paper orders; the first live check is the owner's "Alpaca paper: status".
 - The manual Paper tab can carry on in parallel or stop; the Alpaca account is the record from now on.
+
+## 46. Slow trend on daily bars: passed the written rule, not built (research queue item 11, 20 Nov 2026)
+
+Time-series momentum on gold's daily bars, after AQR and Man AHL's published research. `research/slow_trend_lab.js`: the rules were written and committed (7 Nov 2026) before the 2008-2026 daily file was exported, and the script ran once, unchanged, when `data/XAUUSD.sml_D1_2008.csv` arrived (ExportBars, 19 Nov). Signal at each close: the sign of the close against the close 63, 126 or 252 days earlier, or the blend of the three signs. Long and short, enter and reverse at the next open; a broker stop 3 ATR(20) from the entry, trailing 3 ATR behind the best close; after a stop-out the same side re-enters only on a new 20-day closing extreme. 0.5% risk, 1 R = 3 ATR, no $150 cap. Costs: the bar's spread, $0.05 and the realistic fill draw (100 runs), swap every day at today's demo rates. Picked on 2008-2016, judged once on 2017-01-01 to 2026-10-08. Pass: median R above 0 in at least 90% of runs, median PF over 1.3, both halves (2017-21, 2022-26) above 0.
+
+| Choice | 2008-16 median R / dd / PF | 2017-26 median R / dd / PF | runs above 0 | 2017-21 / 2022-26 R |
+|---|---|---|---|---|
+| 63 days | 4.5 / 5.8 / 1.13 | 4.9 / 8.5 / 1.13 | 100% | 3.9 / 1.0 |
+| **126 days (picked)** | 13.3 / 6.2 / 1.51 | **20.4 / 2.5 / 1.81** | 100% | 12.5 / 8.0 |
+| 252 days | 0.1 / 6.9 / 1.00 | 6.1 / 8.5 / 1.20 | 100% | 1.5 / 4.6 |
+| blend | 9.6 / 4.6 / 1.35 | 10.7 / 7.4 / 1.33 | 100% | 12.4 / -1.7 |
+
+- **PASS on the written rule.** 126 days had the best 2008-16 profit/drawdown (2.17; the blend 2.12, a near tie) and on 2017-26 made a median 20.4 R on 96 trades, PF 1.81, every run above 0, both halves positive. Losing years in the median run: 2010, 2012, 2015, 2022 (worst 2012, -4.6 R). Shorts made money too (84 trades, +10.1 R; longs 116, +24.1 R), so it is not only gold's rise. Average hold 15 days: the 3 ATR trail ends most trades long before the signal turns. Swap cost 6.4 R over 2008-2026. Fresh month: one trade, +0.4 R (information only).
+- **It does not beat holding gold in money.** Holding gold made +38% on 2008-16 and +260% on 2017-26; the strategy at 0.5% risk a trade, not compounded, made about +7% and +10%, with worst drops of about 3% and 1% of the start. It is a small, steady, low-drawdown earner at this risk, about 2 R a year; it would need far more risk per trade to matter, which is the owner's call, not the study's.
+- Caveats: the broker's daily file has spread 0 on every day before 2021, so 2008-2020 costs are only the $0.05 and the slippage draw (small next to a 3 ATR stop, $30-$140 an ounce before 2021); swap uses today's rates for every year (rates were near zero 2009-2021, so the real swap cost was likely smaller). Only four choices were tried, all from the published research, and the pick was nearly tied with the blend, which failed the second half (-1.7 R): the result depends on the lookback more than the 100% of runs suggests. About 10 trades a year is too few to check quickly on a demo.
+- **Not built.** Building it would mean a third EA (daily bars, stops of 3 ATR: $230-$580 an ounce in 2026, so $230-$580 at 0.01 lots, over the $150 cap on every trade this year) and needs the owner's yes. Under "Needs the owner" in data/reports/daily/2026-11-20.md.
+
+## 47. The pullback entry on 2008-2022: tested, not built (research queue item 15, 21 Nov 2026)
+
+The part of section 36 left to do. `research/pullback_2008_lab.js` runs the same pre-registered rules (pullback_lab.js's run(), unchanged; the 2023-24 pick A21 X2, no new picking) on 4-hour bars built from `data/XAUUSD.sml_H1_2008.csv`, entries 2008-03 to 2022-12, with the same costs and 100 runs of realistic fills. The broker's file has spread 0 before 2021, so those bars got $0.30 (about 2022's average); the spread-0 version is printed too. Pass rule unchanged from section 36: on its own above 0 in 90% of runs with PF over 1.2, and added to the H4 breakout a better median profit / worst drawdown. Check: on this file's 2023-26 bars the code reproduces pullback_lab.js exactly (68 trades +45.6 R, 78 trades +14.0 R at ideal fills).
+
+| Choice | 2008-22 trades | median R | PF | runs above 0 | 2008-12 / 2013-17 / 2018-22 R | spread 0 |
+|---|---|---|---|---|---|---|
+| A9 X1 | 1271 | -219.4 | 0.77 | 0% | -32.5 / -78.7 / -106.5 | -163.0 |
+| A9 X2 | 1058 | -28.5 | 0.96 | 0% | -15.4 / 38.4 / -51.4 | 6.2 |
+| A21 X1 | 569 | -78.7 | 0.82 | 0% | 11.6 / -26.4 / -64.1 | -50.6 |
+| **A21 X2 (the pick)** | 615 | **-30.7** | 0.93 | 0% | 12.0 / 12.9 / -53.8 | -7.2 |
+
+- **FAIL.** On its own the pullback lost in every run (PF 0.93); it made money 2008-17 and lost heavily 2018-22. Added to the H4 breakout the "ratio" moved from -0.68 to -0.63 only because both are negative: the breakout alone made -44.3 R with a 65.3 R worst drawdown, the pair -74.2 R with 119.1 R. Together with section 36 (helps neither era as a pair), item 15 is closed: no pullback entry.
+- **Seen after the run, information only, not a test:** today's H4 breakout itself loses on 2008-22 at these costs (-44.3 R median, 899 trades); with spread 0 and no slippage it makes +30.8 R (losing years 2012-15, 2018, 2020, 2022). The fill draws are dollars from today's demo, but gold traded at $800-$1,900 in 2008-2019 with stops 3-5 times smaller, so the same dollar costs weigh 3-5 times more in R. Neither version is a fair picture of 2008-22 costs; a study of the breakout's long history would need costs scaled to the price of the time, written before it runs. Nothing changed.
