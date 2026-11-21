@@ -260,6 +260,8 @@ function onOpen() {
       .addItem('Paper: update now (creates the Paper tab)', 'paperNow')
       .addItem('Alpaca paper: switch on', 'alpacaSwitchOn')
       .addItem('Alpaca paper: status', 'alpacaStatus')
+      .addItem('Alpaca paper: self-test (places and cancels a test order)', 'alpacaSelfTest')
+      .addItem('Alpaca paper: weekly scorecard now', 'alpacaWeekly')
       .addItem('Alpaca paper: switch off', 'alpacaSwitchOff')
       .addSeparator()
       .addItem('Check installation', 'checkInstall')

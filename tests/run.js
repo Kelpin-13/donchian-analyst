@@ -1426,6 +1426,20 @@ section('Alpaca paper trading');
   let refused = false; try { W.run('alpacaKeys_()'); } catch (x) { refused = /not a paper key/.test(x.message); }
   ok(refused, 'alpaca: live keys are refused');
   ok(W.run('ALPACA.base') === 'https://paper-api.alpaca.markets', 'alpaca: the paper server only');
+  W.ctx.__f = [{ symbol: 'XYZ', side: 'buy', qty: '100', price: '110', transaction_time: '2026-11-20T20:59:00Z' },
+               { symbol: 'XYZ', side: 'sell', qty: '50', price: '116', transaction_time: '2026-11-25T20:59:00Z' },
+               { symbol: 'XYZ', side: 'sell', qty: '50', price: '108', transaction_time: '2026-11-30T14:30:00Z' },
+               { symbol: 'ABC', side: 'buy', qty: '10', price: '50', transaction_time: '2026-11-20T20:59:00Z' }];
+  const tr = W.run("alpacaTradeResult_(__f, 'XYZ', { entryDay: '2026-11-20', qty0: 100, risk0: 5 }, '2026-11-30')");
+  ok(tr.pnl === 200 && Math.abs(tr.r - 0.4) < 1e-9, 'alpaca: a closed trade from its fills: +$200 on $500 risked = +0.4 R');
+  const sc = o => W.run('alpacaScorecardText_(' + JSON.stringify(o) + ')');
+  const base = { start: { day: '2026-11-21', equity: 100000, spy: 690 }, equity: 101000, spy: 700, open: 1, marketOk: false, weeks: 8 };
+  let txt = sc(Object.assign({ closed: [] }, base));
+  ok(txt.includes('Account +1.0% | SPY +1.4%') && txt.includes('RED') && txt.includes('Closed trades: 0'), 'alpaca: scorecard shows the account against SPY and the market light');
+  txt = sc(Object.assign({ closed: [{ r: 1 }, { r: -1 }] }, base));
+  ok(txt.includes('Average +0.00 R, win rate 50%') && txt.includes('Too few trades'), 'alpaca: scorecard waits for 5 trades before judging');
+  txt = sc(Object.assign({ closed: Array(10).fill({ r: -1 }) }, base));
+  ok(txt.includes('BELOW the backtest range'), 'alpaca: ten straight losses are flagged below the backtest range');
 }
 
 section('Gap signal and paper exits');

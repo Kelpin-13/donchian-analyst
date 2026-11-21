@@ -91,6 +91,9 @@
  *   The extra ADDS VALUE only if, on 2017 to the end, on BOTH list A and list B: (1) CAGR above holding SPY alone;
  *   (2) worst drawdown no more than 2 percentage points worse than SPY's; (3) CAGR above the random 95th percentile.
  *   Otherwise the paper account stays as it is (gap rule with cash). Nothing is changed in Alpaca.gs by this study.
+ * Core + extra result (21 Nov 2026, one run per list): list A test half 14.9% a year vs SPY 13.7%, worst DD 34.2% vs
+ *   33.7%, random p95 14.4%; list B 14.5%, worst DD 33.7%, random p95 14.0% -> ADDS VALUE on both lists. The extra is
+ *   about +1% a year over holding SPY, and the account still takes SPY's full drops (2008: -51.9% in the design half).
  * --export <file.json>: also writes the picked choice's daily equity, trades, SPY and the random control for
  *   research/gap_report.js (the shareable report). Changes no result.
  * Research only: nothing here trades.

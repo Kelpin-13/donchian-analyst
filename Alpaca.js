@@ -18,22 +18,37 @@
  *   open     3-30 minutes before the open: those are sold with market-on-open orders.
  * Known difference from the backtest: it decides about 15 minutes before the close (the test knew the close), and its
  * stop is the final low of the day. Every order goes to the Alpaca tab and to Telegram.
+ * Also (owner, 21 Nov 2026): a self-test on the menu (places a 1-share SPY limit buy at half the price, reads it back,
+ * cancels it), each closed trade's result in R kept in ALPACA_CLOSED, and a weekly scorecard on Telegram (Saturday
+ * 09:00): the paper account against SPY since ALPACA_START, closed trades against the backtest's expectation.
  */
 const ALPACA = {
   base: 'https://paper-api.alpaca.markets',      // the paper server; never the live one
   sheet: 'Alpaca', riskPct: 0.5, maxWeight: 0.2, maxPos: 10,
-  entryMin: [11, 22], openMin: [3, 30], eveningHours: [16, 19]
+  entryMin: [11, 22], openMin: [3, 30], eveningHours: [16, 19],
+  // the backtest's test half, lists A + B (2017 - Nov 2026, 179 trades): what the paper record is judged against
+  expect: { avgR: 0.32, sdR: 1.73, win: 0.45, perMonth: 1.5 }
 };
 
 /* ---------------- timer, menu ---------------- */
 function alpacaOn_() { return PropertiesService.getScriptProperties().getProperty('ALPACA_ON') === 'true'; }
 function alpacaEnsure_() {
   const has = ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'runAlpaca');
-  if (!alpacaOn_()) { has.forEach(t => ScriptApp.deleteTrigger(t)); return false; }
-  if (has.length) return false;
+  if (!alpacaOn_()) { ScriptApp.getProjectTriggers().filter(t => ['runAlpaca', 'alpacaWeekly'].indexOf(t.getHandlerFunction()) >= 0).forEach(t => ScriptApp.deleteTrigger(t)); return false; }
+  try { alpacaStart_(); } catch (e) { logLine_('WARN', 'Alpaca start point: ' + e.message); }
+  const weekly = ScriptApp.getProjectTriggers().some(t => t.getHandlerFunction() === 'alpacaWeekly');
+  if (!weekly) ScriptApp.newTrigger('alpacaWeekly').timeBased().onWeekDay(ScriptApp.WeekDay.SATURDAY).atHour(9).create();
+  if (has.length) return !weekly;
   ScriptApp.newTrigger('runAlpaca').timeBased().everyMinutes(5).create();
   logLine_('INFO', 'Alpaca: 5-minute timer installed');
   return true;
+}
+/** The scorecard's starting point (equity and SPY), set once. */
+function alpacaStart_() {
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty('ALPACA_START')) return;
+  const a = alpacaApi_('get', '/v2/account'), spy = alpacaYahoo_(['SPY']).SPY;
+  props.setProperty('ALPACA_START', JSON.stringify({ day: Utilities.formatDate(new Date(), 'America/New_York', 'yyyy-MM-dd'), equity: +a.equity, spy: spy ? spy[spy.length - 1].c : null }));
 }
 function alpacaSwitchOn() {
   let msg;
@@ -177,11 +192,19 @@ function alpacaEvening_(st, clock) {
   syms.forEach(sym => {
     const p = st.pos[sym], pos = positions.find(x => x.symbol === sym), b = bars[sym];
     if (!pos) {
-      log.push([p.entryDay === today ? 'NOT FILLED' : 'CLOSED', sym, '', '', p.entryDay === today ? 'the close order did not fill' : 'sold (stop or exit order)']);
+      let note = p.entryDay === today ? 'the close order did not fill' : 'sold (stop or exit order)';
+      if (p.entryDay !== today && p.risk0) {
+        try {
+          const t = alpacaTradeResult_(alpacaApi_('get', '/v2/account/activities/FILL?after=' + p.entryDay + 'T00:00:00Z&direction=asc&page_size=100'), sym, p, today);
+          if (t) { alpacaClosedAdd_(t); note += ': ' + (t.pnl >= 0 ? '+$' : '-$') + Math.abs(t.pnl).toFixed(2) + ', ' + (t.r >= 0 ? '+' : '') + t.r.toFixed(2) + ' R'; }
+        } catch (e) { note += ' (result not read: ' + e.message.slice(0, 80) + ')'; }
+      }
+      log.push([p.entryDay === today ? 'NOT FILLED' : 'CLOSED', sym, '', '', note]);
       delete st.pos[sym]; return;
     }
     if (!b) { log.push(['WARN', sym, pos.qty, '', 'no Yahoo prices: stop left as it is']); return; }
     const e = alpacaEveningPlan_(p, +pos.avg_entry_price, b, today);
+    if (p.entryDay === today && !p.risk0) { p.qty0 = +pos.qty; p.entry = +pos.avg_entry_price; p.risk0 = Math.max(0.01, p.entry - e.stop); }
     if (e.stop < b[b.length - 1].c && (e.stop !== p.stop || !p.stopId || p.stopQty !== +pos.qty)) {
       alpacaCancel_(p.stopId);
       p.stop = e.stop; p.stopId = alpacaStop_(sym, +pos.qty, e.stop); p.stopQty = +pos.qty;
@@ -255,4 +278,72 @@ function alpacaTell_(rows) {
     const chat = telegramChatId_();
     if (chat) telegramCall_('sendMessage', { chat_id: String(chat), text: 'Alpaca PAPER:\n' + rows.map(r => r.filter(x => x !== '').join(' · ')).join('\n') });
   } catch (e) { logLine_('ERROR', 'Alpaca: Telegram: ' + e.message); }
+}
+
+/* ---------------- trade record and scorecard (pure parts tested in tests/run.js) ---------------- */
+/** One closed trade from Alpaca's fill activities: P&L in $ and in R (risk = entry - first stop, on the first size). */
+function alpacaTradeResult_(fills, sym, p, today) {
+  const f = (fills || []).filter(x => x.symbol === sym && String(x.transaction_time).slice(0, 10) >= p.entryDay);
+  if (!f.length) return null;
+  let pnl = 0; f.forEach(x => { pnl += (x.side === 'sell' ? 1 : -1) * (+x.qty) * (+x.price); });
+  return { sym, entryDay: p.entryDay, exitDay: today, pnl: Math.round(pnl * 100) / 100, r: pnl / (p.qty0 * p.risk0) };
+}
+function alpacaClosed_() { try { return JSON.parse(PropertiesService.getScriptProperties().getProperty('ALPACA_CLOSED') || '[]'); } catch (e) { return []; } }
+function alpacaClosedAdd_(t) { const a = alpacaClosed_(); a.push(t); PropertiesService.getScriptProperties().setProperty('ALPACA_CLOSED', JSON.stringify(a.slice(-400))); }
+
+/** The weekly scorecard text. o: {start:{day,equity,spy}, equity, spy, open, marketOk, closed:[{r,pnl}], weeks}. */
+function alpacaScorecardText_(o) {
+  const E = ALPACA.expect, pct = v => (v >= 0 ? '+' : '') + (v * 100).toFixed(1) + '%';
+  const acc = o.equity / o.start.equity - 1, spy = o.start.spy && o.spy ? o.spy / o.start.spy - 1 : null;
+  const L = ['Alpaca PAPER weekly scorecard (since ' + o.start.day + ')',
+    'Account ' + pct(acc) + (spy === null ? '' : ' | SPY ' + pct(spy)) + ' | open positions ' + o.open,
+    'Market light: ' + (o.marketOk ? 'GREEN (SPY above its 200-day): buys allowed' : 'RED (SPY under its 200-day): no buys')];
+  const n = o.closed.length, months = o.weeks / 4.35;
+  L.push('Closed trades: ' + n + ' (the backtest averaged ' + (E.perMonth * months).toFixed(1) + ' in this time, fewer when the light is red)');
+  if (n) {
+    const avg = o.closed.reduce((a, t) => a + t.r, 0) / n, win = o.closed.filter(t => t.r > 0).length / n;
+    L.push('Average ' + (avg >= 0 ? '+' : '') + avg.toFixed(2) + ' R, win rate ' + Math.round(win * 100) + '% (backtest +' + E.avgR.toFixed(2) + ' R, ' + Math.round(E.win * 100) + '%)');
+    if (n >= 5) {
+      const band = 2 * E.sdR / Math.sqrt(n), lo = E.avgR - band, hi = E.avgR + band;
+      L.push(avg < lo ? 'BELOW the backtest range (' + lo.toFixed(2) + ' to ' + hi.toFixed(2) + ' R): worth a review' : 'Inside the backtest range (' + lo.toFixed(2) + ' to ' + hi.toFixed(2) + ' R) for ' + n + ' trades');
+    } else L.push('Too few trades to judge (5 needed for a range, 10-20 for a verdict).');
+  }
+  return L.join('\n');
+}
+
+/** Weekly timer (Saturday 09:00): the scorecard to Telegram. */
+function alpacaWeekly() {
+  if (!alpacaOn_()) return;
+  try {
+    alpacaStart_();
+    const start = JSON.parse(PropertiesService.getScriptProperties().getProperty('ALPACA_START'));
+    const a = alpacaApi_('get', '/v2/account'), pos = alpacaApi_('get', '/v2/positions'), spy = alpacaYahoo_(['SPY']).SPY;
+    const text = alpacaScorecardText_({ start, equity: +a.equity, spy: spy ? spy[spy.length - 1].c : null, open: pos.length,
+      marketOk: spy ? spy[spy.length - 1].c > spy.slice(-200).reduce((x, b) => x + b.c, 0) / 200 : false,
+      closed: alpacaClosed_(), weeks: Math.max(0, (Date.now() - Date.parse(start.day)) / (7 * 86400000)) });
+    const chat = telegramChatId_();
+    if (chat) telegramCall_('sendMessage', { chat_id: String(chat), text });
+    alpacaLog_([['SCORECARD', '', '', '', text.split('\n')[1]]]);
+  } catch (e) { logLine_('ERROR', 'Alpaca weekly: ' + e.message); }
+}
+
+/** Menu: proves the order path works without trading: a 1-share SPY limit buy at half the price, read back, cancelled. */
+function alpacaSelfTest() {
+  const out = [];
+  let ok = true;
+  const step = (name, fn) => { if (!ok) return null; try { const v = fn(); out.push('OK   ' + name); return v; } catch (e) { ok = false; out.push('FAIL ' + name + ': ' + e.message); return null; } };
+  step('paper keys', () => alpacaKeys_());
+  const acct = step('account', () => alpacaApi_('get', '/v2/account'));
+  step('market clock', () => alpacaApi_('get', '/v2/clock'));
+  const spy = step('Yahoo prices', () => { const b = alpacaYahoo_(['SPY', 'AAPL']); if (!b.SPY || b.SPY.length < 253 || !b.AAPL) throw new Error('too little history'); return b.SPY; });
+  const order = step('place a test order (1 SPY, limit at half the price)', () => alpacaApi_('post', '/v2/orders',
+    { symbol: 'SPY', qty: '1', side: 'buy', type: 'limit', limit_price: (Math.round(spy[spy.length - 1].c * 50) / 100).toFixed(2), time_in_force: 'day' }));
+  step('read it back', () => { const o = alpacaApi_('get', '/v2/orders/' + order.id); if (o.symbol !== 'SPY') throw new Error('wrong order'); return o; });
+  step('cancel it', () => { alpacaApi_('delete', '/v2/orders/' + order.id); const o = alpacaApi_('get', '/v2/orders/' + order.id);
+    if (['canceled', 'pending_cancel'].indexOf(o.status) < 0) throw new Error('status ' + o.status); return o; });
+  if (order && !ok) alpacaCancel_(order.id);
+  const msg = (ok ? 'SELF-TEST PASSED' : 'SELF-TEST FAILED') + (acct ? ' (paper equity $' + Math.round(+acct.equity) + ')' : '') + '\n' + out.join('\n');
+  alpacaLog_([['SELF-TEST', 'SPY', 1, '', (ok ? 'passed' : 'FAILED: ' + out[out.length - 1]).slice(0, 200)]]);
+  try { SpreadsheetApp.getUi().alert('Alpaca paper', msg, SpreadsheetApp.getUi().ButtonSet.OK); } catch (e) {}
+  return msg;
 }
